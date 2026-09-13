@@ -1,0 +1,37 @@
+import "server-only";
+
+import { type VerifiedAccountSession } from "@/shared/account/session-types";
+import {
+  HOME_SESSION_COOKIE,
+  readNativeBaseSessionToken,
+} from "@/server/auth/native-base-session";
+import {
+  readCdpRenderSession,
+  type RenderCookieStore,
+} from "@/server/auth/cdp-render-session";
+
+export type RenderSession = {
+  session: VerifiedAccountSession;
+  source: "home-session" | "cdp-hint";
+};
+
+export function readRenderSession(
+  cookies: RenderCookieStore,
+  env: Record<string, string | undefined> = process.env,
+  now: Date = new Date(),
+): RenderSession | null {
+  const nativeCookies = cookies.getAll(HOME_SESSION_COOKIE);
+  if (nativeCookies.length === 1 && nativeCookies[0]?.value) {
+    const native = readNativeBaseSessionToken(
+      nativeCookies[0].value,
+      env.HOME_SESSION_SECRET,
+      now,
+    );
+    if (native.kind === "valid") {
+      return { session: native.session, source: "home-session" };
+    }
+  }
+
+  const cdp = readCdpRenderSession(cookies, env.HOME_SESSION_SECRET, now);
+  return cdp ? { session: cdp, source: "cdp-hint" } : null;
+}
