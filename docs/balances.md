@@ -66,8 +66,9 @@ The Codex catalog reader remains the three-page, 512-entry, 60 s shared cache. I
 `server/balances/price.ts` prices positive holdings as follows:
 
 - The full registry ERC-20/vault-underlying input set remains one stable batch on every pricing pass.
-- Positive `catalog` rows are priced in batches of 25 and retain the ≥ $100k liquidity, ≥ $10k 24 h volume, fresh-price market gate.
-- `wallet` rows are not priced in G1 because they have no liquidity evidence. They return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
+- Positive `catalog` rows are priced in batches of 25 and retain the ≥ $100k liquidity, ≥ $10k 24 h volume market gate for the total.
+- A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
+- `wallet` rows that Codex recognizes by contract address (decision 8) are priced and gated like catalog rows; rows Codex does not know return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
 - ETH and FX continue to use Coinbase exchange rates. Cash rows still get `cashValue` in their own denomination.
 - `total.status` is determined from registry rows only. Gated-in catalog values add to the amount without changing status.
 
@@ -233,4 +234,7 @@ Actions remain registry-only until a separate product decision extends Send.
 2. Persist catalog rows in the device cache (reverses one #337 rule).
 3. Catalog rows visible in the Home teaser, Balances, and Save totals; not actionable. Send for catalog ERC-20s is a later, separate decision.
 4. One server-side observation row per `(chain, address)` in Neon with event-driven invalidation and a 120 s backstop; a failed refresh serves the last observation marked stale — Jesse, 2026-09-13 (§8).
-5. Dust hidden by default with a per-device "show all" — Jesse, 2026-09-13 (§9).
+5. Dust hidden by default with a per-device "show all" — Jesse, 2026-09-13 (§9); the control lives in Account settings ("Show small balances"), with a one-line "N small balances hidden" affordance at the end of Balances that flips the same preference.
+6. **Icons ride on the holding, not on Invest.** Production showed registry Invest rows (cbBTC, DEGEN, stocks) as pending discs because Balances borrowed `assetMarkResolution` from the Invest discover query (public, unpersisted, gated on Codex trending). The server attaches `imageUrl` to registry ERC-20 holdings from the asset icon resolver (1 h cache; configured memes added to its set); catalog and wallet rows keep their Codex image; the presenter uses `holding.imageUrl` for every source and Balances no longer depends on Invest — Jesse, 2026-09-13.
+7. **Display valuation accepts prices up to 24 h old** (`BALANCES_PRICE_MAX_AGE_MS`), carrying `asOf`; older is `price-stale`. The 5-minute rule (`MARKET_PRICE_FRESHNESS_MS`) stays for trade and borrow authorization. Production showed IDRX and low-volume tokens unpriced only because their last Codex trade was older than five minutes — Jesse, 2026-09-13.
+8. **`wallet` rows are enriched and priced.** Resolve looks up enumerated contracts outside the registry and the 512 catalog on Codex by contract address (batched; global cache keyed by address, 60 s): liquidity, 24 h volume, image, name/symbol/decimals cross-check. Enriched wallet rows are priced and gated exactly like catalog rows; contracts Codex does not know stay quantity-only with CDP metadata — Jesse, 2026-09-13.
