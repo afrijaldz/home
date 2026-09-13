@@ -395,6 +395,21 @@ describe("Coinbase headless funding adapter", () => {
     }
   });
 
+  test("accepts the embedded-order payment link type observed live on 2026-09-13", async () => {
+    const result = await provider.createOrder(
+      intent,
+      context((async () => createResponse({}, {
+        url: "https://pay.coinbase.com/v3/api-onramp/embedded-order?sessionToken=synthetic",
+        paymentLinkType: "PAYMENT_LINK_TYPE_EMBEDDED_ORDER",
+      })) as unknown as typeof fetch),
+    );
+
+    expect(result.outcome).toBe("created");
+    if (result.outcome !== "created") throw new Error("unreachable");
+    expect(result.order.instructions.kind).toBe("embed");
+    expect(new URL((result.order.instructions as { url: string }).url).pathname).toBe("/v3/api-onramp/embedded-order");
+  });
+
   test("maps a create fee-equation mismatch to ambiguous after one call", async () => {
     let calls = 0;
     const result = await provider.createOrder(

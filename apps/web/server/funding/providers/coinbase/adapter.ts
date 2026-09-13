@@ -25,7 +25,13 @@ const ONRAMP_HOST = "api.cdp.coinbase.com";
 const ORDERS_PATH = "/platform/v2/onramp/orders";
 const ORDERS_URL = `${COINBASE_ONRAMP_API_ORIGIN}${ORDERS_PATH}`;
 const PAYMENT_METHOD = "GUEST_CHECKOUT_APPLE_PAY";
-const PAYMENT_LINK_TYPE = "PAYMENT_LINK_TYPE_APPLE_PAY_BUTTON";
+// Standard-mode orders return an Apple Pay button link; embedded orders (Coinbase
+// collects contact, OTP and identity in the hosted session) return an embedded-order
+// link. Observed live on 2026-09-13; the API reference example shows only the first.
+const PAYMENT_LINK_TYPES = [
+  "PAYMENT_LINK_TYPE_APPLE_PAY_BUTTON",
+  "PAYMENT_LINK_TYPE_EMBEDDED_ORDER",
+] as const;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RESPONSE_BODY_TIMEOUT_MS = 6_000;
 const MAX_STRING_LENGTH = 4096;
@@ -338,7 +344,9 @@ function orderFromResponse(
   const fees = readFees(order.fees);
   assertPaymentEquation(paymentTotal, order.paymentSubtotal, fees.totalAtomic);
   const paymentLink = readRecord(envelope.paymentLink);
-  assertExact(paymentLink.paymentLinkType, PAYMENT_LINK_TYPE);
+  if (!(PAYMENT_LINK_TYPES as readonly unknown[]).includes(paymentLink.paymentLinkType)) {
+    throw new Error("Coinbase echo mismatch.");
+  }
   const paymentUrl = paymentUrlForMode(readPaymentUrl(paymentLink.url), ctx.sandbox);
   return {
     providerOrderId,
