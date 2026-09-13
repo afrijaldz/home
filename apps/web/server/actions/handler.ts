@@ -32,6 +32,8 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
 const RECONCILE_GRACE_MS = 20_000;
 const RECONCILE_MAX_PER_REQUEST = 5;
+// Window step matches the client's Activity poll so >5 candidates are covered across consecutive requests.
+const RECONCILE_ROTATION_MS = 10_000;
 const RECONCILE_DEADLINE_MS = 3_000;
 let defaultActionHandleResolver: ActionHandleResolver | null = null;
 
@@ -200,11 +202,13 @@ export function createListActionsHandler(dependencies: {
     const store = dependencies.store ?? getActionsStore();
     const rows = await store.list(owner);
     const now = dependencies.now?.() ?? new Date();
-    const candidateIds = new Set(rows
-      .filter((row) => isReconcileCandidate(row, now))
-      .sort((left, right) => confirmedAtMs(right) - confirmedAtMs(left))
-      .slice(0, RECONCILE_MAX_PER_REQUEST)
-      .map((row) => row.id));
+    const candidateIds = new Set(rotatingWindow(
+      rows
+        .filter((row) => isReconcileCandidate(row, now))
+        .sort((left, right) => confirmedAtMs(right) - confirmedAtMs(left)),
+      RECONCILE_MAX_PER_REQUEST,
+      now.getTime(),
+    ).map((row) => row.id));
     const deadline = createDeadline(request.signal);
     try {
       const actions = await Promise.all(rows.map(async (row) => {
@@ -328,6 +332,13 @@ function isReconcileCandidate(row: ActionRow, now: Date): boolean {
     row.provider_handle !== row.id &&
     Number.isFinite(confirmedAt) &&
     now.getTime() - confirmedAt >= RECONCILE_GRACE_MS;
+}
+
+/** Newest-first when the list fits; otherwise a window that walks the list over time so no candidate is starved by permanently hashless newer rows. */
+function rotatingWindow<T>(items: T[], size: number, nowMs: number): T[] {
+  if (items.length <= size) return items;
+  const start = Math.floor(nowMs / RECONCILE_ROTATION_MS) % items.length;
+  return Array.from({ length: size }, (_, index) => items[(start + index) % items.length]!);
 }
 
 function confirmedAtMs(row: ActionRow): number {

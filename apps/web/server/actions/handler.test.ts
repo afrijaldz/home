@@ -340,7 +340,7 @@ describe("actions HTTP handlers", () => {
     });
   });
 
-  test("list reconciles only the newest five candidates", async () => {
+  test("list reconciles at most five candidates per request and rotates the window across polls", async () => {
     const candidates = Array.from({ length: 7 }, (_, index) => confirmedBaseRow({
       id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
       confirmed_at: new Date(Date.parse("2026-09-12T12:00:00.000Z") + index * 1_000).toISOString(),
@@ -351,17 +351,25 @@ describe("actions HTTP handlers", () => {
       confirmed_at: "2026-09-12T12:09:00.000Z",
       provider_handle: "99999999-9999-4999-8999-999999999999",
     });
-    const resolvedIds: string[] = [];
+    let resolvedIds: string[] = [];
+    let nowIso = "2026-09-12T12:10:00.000Z";
     const handler = createListActionsHandler({
       authorize: authorize("owner-a", "base-account"),
-      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      now: () => new Date(nowIso),
       store: { list: async () => [legacy, ...candidates], recordHandle: async () => null },
       resolveHandle: async (candidate) => { resolvedIds.push(candidate.id); return { status: "pending" }; },
     });
 
-    expect((await handler(baseRequest("/api/actions"))).status).toBe(200);
-    expect(resolvedIds).toHaveLength(5);
-    expect(resolvedIds.sort()).toEqual(candidates.slice(2).map(({ id }) => id).sort());
+    const covered = new Set<string>();
+    for (const step of [0, 1, 2]) {
+      nowIso = new Date(Date.parse("2026-09-12T12:10:00.000Z") + step * 10_000).toISOString();
+      resolvedIds = [];
+      expect((await handler(baseRequest("/api/actions"))).status).toBe(200);
+      expect(resolvedIds).toHaveLength(5);
+      expect(resolvedIds).not.toContain(legacy.id);
+      for (const id of resolvedIds) covered.add(id);
+    }
+    expect([...covered].sort()).toEqual(candidates.map(({ id }) => id).sort());
   });
 
   test("list reconciles only eligible Base rows while reading existing receipts", async () => {
