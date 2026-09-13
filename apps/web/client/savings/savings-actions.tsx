@@ -83,7 +83,6 @@ export function SavingsMoneyDialog({
       id: `savings:${success.mode}:${success.amount}`,
       tone: "success",
       role: "status",
-      duration: 6_000,
       onClose: () => setSuccess(null),
       message: (
         <div className="flex flex-col gap-1">

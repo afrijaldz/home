@@ -102,7 +102,6 @@ export function TransferActionsForWallet({
       id: `send:${visibleSuccess.transactionHash}`,
       tone: "success",
       role: "status",
-      duration: 6_000,
       onClose: () => setSuccess(null),
       message: (
         <div className="flex min-w-0 items-center gap-3">
