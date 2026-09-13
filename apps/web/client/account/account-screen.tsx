@@ -3,7 +3,7 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import { AppDrawer } from "@/client/money-modal";
+import { AppDrawer, MoneyModalBody } from "@/client/money-modal";
 import { X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -279,7 +279,7 @@ export function AccountSignInSheet({
             <X aria-hidden="true" />
           </Button>
         </DrawerHeader>
-        <div className="min-h-0 flex-1 overflow-auto p-4">
+        <MoneyModalBody className="pt-4">
           {signInBlocked ? (
             <SignInBlockedPanel reason={signInAvailability === "provider-unavailable" ? "provider-unavailable" : "unconfigured"} />
           ) : (
@@ -323,7 +323,7 @@ export function AccountSignInSheet({
               ) : null}
             </>
           )}
-        </div>
+        </MoneyModalBody>
       </AppDrawer> : null}
       {open && isProviderHandoff && !baseAccountFailed ? (
         <BaseAccountHandoff phase={activeBaseAccountPhase} onCancel={closeAndCancelAttempt} />

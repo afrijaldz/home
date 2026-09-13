@@ -25,7 +25,7 @@ export function PrimaryNavigation({
 }: PrimaryNavigationProps) {
   return (
     <nav
-      className="order-2 grid shrink-0 grid-cols-2 border-t bg-background pb-[env(safe-area-inset-bottom)] md:order-1 md:border-y md:pb-0"
+      className="order-2 grid w-full shrink-0 grid-cols-2 border-t bg-background pb-[env(safe-area-inset-bottom)] sm:order-1 sm:mx-auto sm:max-w-2xl sm:border-x sm:border-b sm:pb-0"
       aria-label="Main navigation"
     >
       {navigationItems.map((item) => {

@@ -40,20 +40,19 @@ export function DiscoverAssetRow({
     <li>
       <Item
         render={<Button variant="ghost" />}
-        size="sm"
-        className="h-auto flex-nowrap border-0 text-left"
+        className="min-h-16 flex-nowrap items-center border-0 text-left"
         onClick={onOpen}
         aria-describedby={`${asset.id}-action-hint`}
       >
-        <ItemMedia>
+        <ItemMedia variant="image" className="size-10 self-center translate-y-0 rounded-full bg-muted">
           <AssetIcon mark={mark} />
         </ItemMedia>
-        <ItemContent>
+        <ItemContent className="min-w-0">
           <ItemTitle>{asset.displayName}</ItemTitle>
           <ItemDescription>{asset.displaySymbol}</ItemDescription>
         </ItemContent>
         <ItemContent className="items-end text-right">
-          <ItemTitle className="tabular-nums">{price.value}</ItemTitle>
+          <ItemTitle className="text-sm font-medium tabular-nums">{price.value}</ItemTitle>
           {change !== "—" ? (
             <ItemDescription
               className={

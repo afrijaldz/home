@@ -1,7 +1,7 @@
 "use client";
 
 import { Separator } from "@/components/ui/separator";
-import { MoneyModal, MoneyModalHeader } from "@/client/money-modal";
+import { MoneyModal, MoneyModalBody, MoneyModalHeader } from "@/client/money-modal";
 import type { TransactionDetails } from "./transaction-explorer";
 
 export type {
@@ -35,10 +35,10 @@ export function TransactionDetailsModal({
         onClose={onClose}
         closeLabel="Close transaction details"
       />
-      <div className="min-h-0 flex-1 overflow-auto p-4">
-        <dl className="divide-y divide-border border-y">
+      <MoneyModalBody className="pt-4">
+        <dl>
           {rows.map((row) => (
-            <div className="flex items-start justify-between gap-4 py-3 text-sm" key={row.label}>
+            <div className="flex items-start justify-between gap-4 border-b py-3 text-sm" key={row.label}>
               <dt className="text-muted-foreground">{row.label}</dt>
               <dd className="min-w-0 text-right font-medium tabular-nums" title={row.title}>{row.value}</dd>
             </div>
@@ -61,7 +61,7 @@ export function TransactionDetailsModal({
             </div>
           </>
         ) : null}
-      </div>
+      </MoneyModalBody>
     </MoneyModal>
   );
 }

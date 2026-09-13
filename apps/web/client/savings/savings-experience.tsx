@@ -16,6 +16,7 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
+  ItemMedia,
   ItemSeparator,
   ItemTitle,
 } from "@/components/ui/item";
@@ -353,7 +354,7 @@ export function SavingsExperience({
 
   return (
     <section
-      className="mx-auto w-full max-w-xl space-y-6"
+      className="w-full space-y-4"
       aria-label={hosted ? "Save" : undefined}
       aria-labelledby={hosted ? undefined : "savings-title"}
     >
@@ -468,9 +469,11 @@ export function SavingsExperience({
           Vaults are temporarily unavailable.
         </SavingsNotice>
       ) : !coldLoading && !positionFailed && candidates.length > 0 ? (
-        <section className="space-y-3" aria-label="Vaults">
-          <ItemGroup role="radiogroup" aria-label="Vault">
-            {candidates.map((candidate) => {
+        <section className="space-y-4" aria-label="Vaults">
+          <Card>
+            <CardContent className="px-2">
+              <ItemGroup className="gap-0" role="radiogroup" aria-label="Vault">
+                {candidates.map((candidate) => {
               const isSelected =
                 selected?.vaultAddress === candidate.vaultAddress;
               const balance = balances.find(
@@ -494,7 +497,8 @@ export function SavingsExperience({
               return (
                 <Fragment key={candidate.vaultAddress}>
                   <Item
-                    variant={isSelected ? "muted" : "outline"}
+                    variant={isSelected ? "muted" : "default"}
+                    className="min-h-16 flex-nowrap items-center rounded-none border-0"
                     render={
                       <Button
                         variant="ghost"
@@ -509,6 +513,9 @@ export function SavingsExperience({
                       />
                     }
                   >
+                    <ItemMedia variant="image" aria-hidden="true" className="size-10 self-center translate-y-0 rounded-full bg-muted text-xs font-semibold">
+                      {vaultInitials(candidate.name)}
+                    </ItemMedia>
                     <ItemContent className="min-w-0">
                       <ItemTitle>{candidate.name}</ItemTitle>
                       {funded && loadState.status === "ready" ? (
@@ -521,15 +528,17 @@ export function SavingsExperience({
                         </ItemDescription>
                       ) : null}
                     </ItemContent>
-                    <ItemActions className="justify-end text-right text-sm tabular-nums">
+                    <ItemActions className="justify-end text-right text-sm font-medium tabular-nums">
                       {rowValue}
                     </ItemActions>
                   </Item>
-                  {candidate !== candidates.at(-1) ? <ItemSeparator /> : null}
+                  {candidate !== candidates.at(-1) ? <ItemSeparator className="my-0" /> : null}
                 </Fragment>
               );
             })}
-          </ItemGroup>
+              </ItemGroup>
+            </CardContent>
+          </Card>
           {selected ? (
             <Card size="sm">
               <CardHeader>
@@ -613,6 +622,15 @@ export function SavingsExperience({
       ) : null}
     </section>
   );
+}
+
+function vaultInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function availableVaultApyLabel(

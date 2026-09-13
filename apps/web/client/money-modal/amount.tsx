@@ -10,7 +10,6 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDownUp, Delete } from "lucide-react";
 import { CurrencyMark } from "@/components/currency-mark";
@@ -208,7 +207,7 @@ export function MoneyAmountDisplay({
   assetId?: string;
   assetLabel?: string;
   assetCurrency?: string | null;
-  assetOptions?: ReadonlyArray<{ id: string; label: string }>;
+  assetOptions?: ReadonlyArray<{ id: string; label: string; description?: string }>;
   onAssetChange?: (assetId: string) => void;
   assetLocked?: boolean;
   chipSet?: MoneyChipSet;
@@ -333,7 +332,7 @@ export function MoneyAssetPicker({
   assetId?: string;
   assetLabel?: string;
   assetCurrency?: string | null;
-  assetOptions?: ReadonlyArray<{ id: string; label: string }>;
+  assetOptions?: ReadonlyArray<{ id: string; label: string; description?: string }>;
   onAssetChange?: (assetId: string) => void;
   locked?: boolean;
 }) {
@@ -358,11 +357,15 @@ export function MoneyAssetPicker({
       onValueChange={(option) => { if (option) onAssetChange?.(option.id); }}
       itemToStringValue={(option) => option.label}
     >
-      <ComboboxInput aria-label="Asset" placeholder={assetLabel} className="w-36" />
+      <ComboboxInput aria-label="Asset" placeholder={assetLabel} className="w-auto min-w-28" />
       <ComboboxContent>
         <ComboboxEmpty>No assets found.</ComboboxEmpty>
         <ComboboxList>
-          {(option) => <ComboboxItem key={option.id} value={option}>{option.label}</ComboboxItem>}
+          {(option) => (
+            <ComboboxItem key={option.id} value={option}>
+              {option.description ? `${option.label} — ${option.description}` : option.label}
+            </ComboboxItem>
+          )}
         </ComboboxList>
       </ComboboxContent>
     </Combobox>
@@ -430,12 +433,15 @@ export function MoneyUnitToggle({
   onToggle: () => void;
 }) {
   return (
-    <ToggleGroup value={["secondary"]} onValueChange={() => onToggle()} variant="outline" size="sm">
-      <ToggleGroupItem value="secondary" aria-label={`Show ${secondaryLabel} as the primary amount`}>
-        <ArrowDownUp className="size-4" aria-hidden="true" />
-        <MoneyTicker value={secondaryLabel} />
-      </ToggleGroupItem>
-    </ToggleGroup>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onToggle}
+      aria-label={`Show ${secondaryLabel} as the primary amount`}
+    >
+      <ArrowDownUp className="size-4" aria-hidden="true" />
+      <MoneyTicker value={secondaryLabel} />
+    </Button>
   );
 }
 
@@ -457,9 +463,8 @@ export function MoneyNumpad({
       {KEYS.map((key) => (
         <Button
           key={key}
-          className="min-h-11 text-lg tabular-nums"
+          className="h-14 text-xl tabular-nums"
           variant="ghost"
-          size="lg"
           disabled={disabled}
           aria-label={key === "backspace" ? "Delete last digit" : key === "." ? "Decimal point" : key}
           onClick={() => {

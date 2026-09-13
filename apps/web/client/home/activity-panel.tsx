@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, type ReactNode } from "react";
 import {
+  ACTIVITY_TEASER_LIMIT,
   ActivityPanel,
   type ActivityPanelDensity,
   type FetchActivity,
@@ -117,6 +118,7 @@ export function ConnectedActivityPanel({
           excludeTransactionHashes={indexedTransactionHashes}
           embedded
           showUnavailableNotice={false}
+          limit={density === "teaser" ? ACTIVITY_TEASER_LIMIT : undefined}
         />
       }
     />

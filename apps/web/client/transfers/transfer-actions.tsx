@@ -117,10 +117,12 @@ export function TransferActionsForWallet({
   }, [routing]);
 
   return (
-    <div className="flex flex-wrap gap-2" aria-label="Transfer actions">
+    <>
       <Button
         data-action-trigger=""
-        variant="secondary"
+        variant="outline"
+        size="lg"
+        className="h-11"
         disabled={!boundary}
         onClick={openSend}
       >
@@ -147,7 +149,6 @@ export function TransferActionsForWallet({
             document.body,
           )
         : null}
-
-    </div>
+    </>
   );
 }

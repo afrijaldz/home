@@ -163,7 +163,7 @@ function ActivitySurface({
     <section aria-labelledby={labelledBy} aria-label={label} aria-busy={busy || undefined}>
       <Card>
         {heading ? <CardHeader>{heading}</CardHeader> : null}
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 px-2">
           {leading}
           {children}
         </CardContent>

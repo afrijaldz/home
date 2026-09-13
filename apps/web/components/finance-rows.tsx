@@ -61,15 +61,15 @@ function FinanceRow({
   const hintId = useId();
   const content = (
     <>
-      <ItemMedia className="self-center" aria-hidden="true">
+      <ItemMedia variant="image" className="size-10 self-center translate-y-0 rounded-full bg-muted" aria-hidden="true">
         <span
           className={cn(
-            "grid size-8 place-items-center rounded-sm bg-foreground text-xs font-semibold text-background",
-            iconTone === "incoming" && "bg-primary/10 text-primary",
-            iconTone === "outgoing" && "bg-muted text-[var(--market-loss)]",
-            iconTone === "self" && "bg-primary/10 text-primary",
-            iconTone === "outlined" && "border border-border bg-background text-foreground",
-            iconTone === "mark" && "overflow-hidden rounded-full bg-transparent text-inherit",
+            "grid size-10 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground",
+            iconTone === "incoming" && "text-muted-foreground",
+            iconTone === "outgoing" && "text-muted-foreground",
+            iconTone === "self" && "text-muted-foreground",
+            iconTone === "outlined" && "text-destructive",
+            iconTone === "mark" && "overflow-hidden bg-transparent text-inherit",
           )}
           data-tone={iconTone}
         >
@@ -97,7 +97,7 @@ function FinanceRow({
         </ItemTitle>
         {valueContext === undefined ? null : (
           <ItemDescription
-            className="line-clamp-1 w-full text-right text-xs text-inherit"
+            className="line-clamp-1 w-full text-right text-sm text-muted-foreground"
             title={valueContextTitle}
           >
             {valueContext}
@@ -116,8 +116,7 @@ function FinanceRow({
     <li>
       <Item
         data-kind={kind}
-        size="sm"
-        className={cn("flex-nowrap rounded-none border-0", onActivate && "cursor-pointer")}
+        className={cn("min-h-16 flex-nowrap items-center rounded-none border-0", onActivate && "cursor-pointer")}
         {...(onActivate
           ? {
               render: (

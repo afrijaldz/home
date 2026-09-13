@@ -96,9 +96,9 @@ export function DashboardShell({
     <>
       <main
         ref={mainRef}
-        className="app-main-authenticated order-1 min-h-0 flex-1 overscroll-contain overflow-x-hidden overflow-y-auto bg-muted pb-[max(1rem,env(safe-area-inset-bottom))] scroll-pb-[max(1rem,env(safe-area-inset-bottom))] md:order-2"
+        className="app-main-authenticated order-1 min-h-0 flex-1 overscroll-contain overflow-x-hidden overflow-y-auto bg-muted pb-[max(1rem,env(safe-area-inset-bottom))] scroll-pb-[max(1rem,env(safe-area-inset-bottom))] sm:order-2"
       >
-        <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+        <div className="mx-auto w-full max-w-2xl px-4 py-4 sm:py-6">
         {isUnavailable ? (
           <Alert className="mb-4" role="alert">
             <AlertDescription>{unavailableMessage ?? "Account check unavailable."}</AlertDescription>

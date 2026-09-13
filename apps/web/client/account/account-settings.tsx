@@ -65,20 +65,22 @@ export function AccountSettings({
         </h2>
         <Card>
           <CardContent className="px-2">
-            <Item className="min-w-0 flex-nowrap">
-              <ItemMedia>
-                <CurrencyMark
-                  currency={region.currency.code}
-                  symbol={region.currency.symbol}
-                />
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle>Country</ItemTitle>
-                <ItemDescription id="country-help" className="line-clamp-none">
-                  Sets how money is shown
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions className="min-w-0 max-w-3/5 flex-1 justify-end max-sm:max-w-none">
+            <Item className="min-w-0 flex-col items-stretch sm:flex-row sm:flex-nowrap sm:items-center">
+              <div className="flex min-w-0 flex-col items-start gap-2.5 sm:flex-1 sm:flex-row sm:items-center">
+                <ItemMedia className="self-center translate-y-0">
+                  <CurrencyMark
+                    currency={region.currency.code}
+                    symbol={region.currency.symbol}
+                  />
+                </ItemMedia>
+                <ItemContent className="min-w-0 flex-1">
+                  <ItemTitle>Country</ItemTitle>
+                  <ItemDescription id="country-help" className="line-clamp-none">
+                    Sets how money is shown
+                  </ItemDescription>
+                </ItemContent>
+              </div>
+              <ItemActions className="w-full shrink-0 sm:max-w-1/2 sm:justify-end">
                 <CountrySelect
                   value={regionId}
                   onValueChange={onRegionChange}

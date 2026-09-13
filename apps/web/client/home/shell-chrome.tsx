@@ -40,10 +40,10 @@ export function ShellHeader({
   onCloseSettings: () => void;
 }) {
   return (
-    <header className="order-0 flex h-14 shrink-0 items-center justify-between gap-4 border-b bg-background px-4">
+    <header className="order-0 mx-auto flex min-h-14 w-full max-w-2xl shrink-0 items-center justify-between gap-4 border-b bg-background px-4 py-2">
       <div className="flex min-w-0 items-center">
         {isAccountSettingsOpen ? (
-          <h1 className="truncate text-lg font-semibold">Account</h1>
+          <h1 className="text-base font-semibold">Account</h1>
         ) : nestedChromeTitle ? (
           <NestedHomeHeader
             title={nestedChromeTitle}
@@ -51,7 +51,7 @@ export function ShellHeader({
             onBack={onNestedChromeBack}
           />
         ) : routeMode === "dashboard" && activeNavigation === "invest" ? (
-          <h1 className="truncate text-lg font-semibold">Invest</h1>
+          <h1 className="text-base font-semibold">Invest</h1>
         ) : (
           <HomeMark onClick={() => { if (isVerified) onHome(); }} />
         )}
@@ -139,7 +139,7 @@ function NestedHomeHeader({
       <Button variant="ghost" size="icon" onClick={onBack} aria-label={backLabel}>
         <ArrowLeft className="size-4" aria-hidden="true" />
       </Button>
-      <h1 className="truncate text-lg font-semibold">{title}</h1>
+      <h1 className="min-w-0 text-base font-semibold">{title}</h1>
     </div>
   );
 }

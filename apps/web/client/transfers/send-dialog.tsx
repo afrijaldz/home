@@ -12,6 +12,7 @@ import {
   MoneyAmountDisplay,
   MoneyConfirmSummary,
   MoneyModal,
+  MoneyModalBody,
   MoneyModalFooter,
   MoneyModalHeader,
   MoneyNumpad,
@@ -95,7 +96,11 @@ export function SendDialog({
   const pricing = useMoneyAssetPricing(selectedAsset?.symbol ?? "");
   const selectedAvailability = availableAssets?.find((asset) => asset.id === activeAssetId);
   const assetOptions = useMemo(
-    () => availableAssets?.map((asset) => ({ id: asset.id, label: `${asset.symbol} — ${asset.name}` })) ?? [],
+    () => availableAssets?.map((asset) => ({
+      id: asset.id,
+      label: asset.symbol,
+      description: asset.name,
+    })) ?? [],
     [availableAssets],
   );
 
@@ -187,7 +192,7 @@ export function SendDialog({
   return (
     <MoneyModal open={open} labelledBy="send-title" immediate={immediate} onCancel={close} onClose={() => { reset(); (onClosed ?? onClose)(); }}>
       <MoneyModalHeader title={step === "confirm" || step === "pending" || step === "error" ? "Confirm" : "Send"} titleId="send-title" onBack={step === "amount" || step === "pending" ? undefined : back} onClose={close} closeDisabled={step === "pending"} closeLabel="Close send dialog" />
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+      <MoneyModalBody className="gap-4 pt-4">
         {step === "amount" ? <>
           <MoneyAmountDisplay amount={amount} amountChangeSource={amountChangeSource} onAmountChange={changeAmount} availableLabel={selectedAvailability ? `${selectedAvailability.balanceLabel} available` : undefined} assetId={activeAssetId ?? undefined} assetLabel={selectedAsset?.symbol} assetCurrency={selectedAsset?.cashCurrency} assetOptions={assetOptions} onAssetChange={(next) => { setAssetId(next); changeAmount("", "programmatic"); }} chipSet={pricing.status === "priced" ? "quick-local" : "none"} pricing={pricing} nativeSymbol={selectedAsset?.symbol ?? ""} />
           {selectedAsset ? <MoneyNumpad value={amount} maxDecimals={selectedAsset.decimals} onChange={changeAmount} /> : <StatusMessage>No catalog balance is available to send.</StatusMessage>}
@@ -205,7 +210,7 @@ export function SendDialog({
           {step === "pending" ? <StatusMessage><span className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />Waiting for your wallet…</span></StatusMessage> : null}
         </> : null}
         {error ? <StatusMessage tone="error" role="alert">{error}</StatusMessage> : null}
-      </div>
+      </MoneyModalBody>
       {step === "amount" ? <MoneyModalFooter primaryLabel="Continue" primaryDisabled={!selectedAsset || !isPositiveDecimalAmount(amount)} onPrimary={() => { setError(null); setStep("address"); }} /> : null}
       {step === "address" ? <MoneyModalFooter primaryLabel="Continue" primaryDisabled={!isTransferRecipient(recipient)} onPrimary={() => void prepare()} /> : null}
       {step === "confirm" ? <MoneyModalFooter primaryLabel={<>Send <MoneyTicker value={confirmAmount} /></>} onPrimary={() => void confirm()} secondaryLabel="Back" onSecondary={back} /> : null}

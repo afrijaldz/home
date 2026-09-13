@@ -12,9 +12,9 @@ export function MoneyConfirmSummary({ amount, lead, rows }: { amount: string; le
         <div className="text-4xl font-semibold tabular-nums"><MoneyTicker value={amount} /></div>
         <p className="text-sm text-muted-foreground">{lead}</p>
       </div>
-      <dl className="divide-y divide-border border-y">
+      <dl>
         {rows.map((row) => (
-          <div className="flex items-start justify-between gap-4 py-3 text-sm" key={row.label}>
+          <div className="flex items-start justify-between gap-4 border-b py-3 text-sm" key={row.label}>
             <dt className="text-muted-foreground">{row.label}</dt>
             <dd className="min-w-0 text-right font-medium tabular-nums">{row.value}</dd>
           </div>

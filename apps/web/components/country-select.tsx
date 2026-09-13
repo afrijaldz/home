@@ -61,7 +61,7 @@ export function CountrySelect({
         placeholder="Search countries"
         className={
           variant === "settings"
-            ? "h-11 w-full max-w-56 [&_[role=combobox]]:text-right"
+            ? "h-11 w-full sm:max-w-56 [&_[role=combobox]]:text-right"
             : "h-11 w-full"
         }
       />

@@ -30,7 +30,7 @@ export function AppDrawer({ open, labelledBy, describedBy, immediate = false, in
         initialFocus={initialFocusRef ?? (() => popupRef.current?.querySelector<HTMLElement>("[data-initial-focus]:not(:disabled)") ?? true)}
         data-money-sheet=""
         data-immediate={immediate ? "" : undefined}
-        className="max-h-[88svh] bg-background text-foreground shadow-lg data-[immediate]:duration-0"
+        className="max-h-[88svh] bg-background text-foreground shadow-lg data-[immediate]:duration-0 sm:mx-auto sm:max-w-md sm:rounded-t-xl"
       >
         <DrawerSwipeHandle data-money-sheet-grabber="" />
         {children}
@@ -59,12 +59,20 @@ export function MoneyModalHeader({ title, titleId, onBack, onClose, closeDisable
   );
 }
 
+export function MoneyModalBody({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`flex min-h-0 flex-1 flex-col overflow-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))] ${className}`.trim()}>
+      {children}
+    </div>
+  );
+}
+
 export function MoneyModalFooter({ primaryLabel, onPrimary, primaryDisabled = false, primaryType = "button", secondaryLabel, onSecondary, secondaryDisabled = false }: {
   primaryLabel: ReactNode; onPrimary?: () => void; primaryDisabled?: boolean; primaryType?: "button" | "submit";
   secondaryLabel?: ReactNode; onSecondary?: () => void; secondaryDisabled?: boolean;
 }) {
   return (
-    <DrawerFooter className="pb-[calc(1rem+env(safe-area-inset-bottom))]">
+    <DrawerFooter className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
       <Button size="lg" className="h-11" type={primaryType} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</Button>
       {secondaryLabel && onSecondary ? <Button size="lg" variant="ghost" className="h-11" disabled={secondaryDisabled} onClick={onSecondary}>{secondaryLabel}</Button> : null}
     </DrawerFooter>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ItemGroup, ItemSeparator } from "@/components/ui/item";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -121,15 +122,19 @@ export function BalancesPage({
           {balanceStatusLabel}
         </p>
       ) : null}
-      <IncrementalBalancesList
-        active={active}
-        items={assetBalances?.items ?? []}
-        isLoading={isLoading}
-        isUnavailable={assetBalances?.status === "unavailable"}
-        assetMarkResolution={assetMarkResolution}
-        revealedCount={revealedCount}
-        onRevealMore={onRevealMore}
-      />
+      <Card>
+        <CardContent className="px-2">
+          <IncrementalBalancesList
+            active={active}
+            items={assetBalances?.items ?? []}
+            isLoading={isLoading}
+            isUnavailable={assetBalances?.status === "unavailable"}
+            assetMarkResolution={assetMarkResolution}
+            revealedCount={revealedCount}
+            onRevealMore={onRevealMore}
+          />
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -184,7 +189,7 @@ function IncrementalBalancesList({
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) onRevealMore();
       },
-      { root, rootMargin: "0px 0px 40% 0px" },
+      { root, rootMargin: "0px 0px 100% 0px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -249,7 +254,7 @@ function HomeBalanceRowView({
 }) {
   if (asset.displayContext === "Updating…") {
     return (
-      <li className="flex items-center gap-3 px-3 py-2.5" data-shimmer="row">
+      <li className="flex min-h-16 items-center gap-3 px-3 py-2.5" data-shimmer="row">
         <CurrencyMark pending />
         <span className="flex flex-1 flex-col gap-2">
           <Skeleton className="h-4 w-28" />

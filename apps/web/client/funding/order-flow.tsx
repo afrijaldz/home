@@ -24,6 +24,7 @@ import {
 } from "@/shared/formatting";
 import {
   MoneyAmountDisplay,
+  MoneyModalBody,
   MoneyModalFooter,
   MoneyNumpad,
   type MoneyAmountChangeSource,
@@ -223,7 +224,7 @@ export function FundingOrderFlow({
   );
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 flex flex-col gap-4">
+      <MoneyModalBody className="gap-4 pt-4">
         {binding.paymentMethods.length > 1 ? (
           <Field>
             <FieldLabel htmlFor="funding-payment-method">
@@ -316,7 +317,7 @@ export function FundingOrderFlow({
             {error}
           </FundingNotice>
         ) : null}
-      </div>
+      </MoneyModalBody>
       <MoneyModalFooter
         primaryLabel={busy ? "Getting quote…" : "Review quote"}
         primaryDisabled={busy || !fieldsComplete || !positiveDecimal(amount)}
@@ -359,7 +360,7 @@ function QuoteReview({
   );
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 flex flex-col gap-4">
+      <MoneyModalBody className="gap-4 pt-4">
         <Card>
           <CardHeader>
             <CardTitle>
@@ -399,7 +400,7 @@ function QuoteReview({
             {error}
           </FundingNotice>
         ) : null}
-      </div>
+      </MoneyModalBody>
       <MoneyModalFooter
         primaryLabel={busy ? "Confirming same order…" : "Confirm deposit"}
         primaryDisabled={busy}
@@ -433,7 +434,7 @@ function ProviderEconomicsReview({
   );
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 flex flex-col gap-4">
+      <MoneyModalBody className="gap-4 pt-4">
         <Card>
           <CardHeader>
             <CardTitle>
@@ -457,7 +458,7 @@ function ProviderEconomicsReview({
             </dl>
           </CardContent>
         </Card>
-      </div>
+      </MoneyModalBody>
       <MoneyModalFooter
         primaryLabel="View payment instructions"
         onPrimary={onContinue}
@@ -468,9 +469,9 @@ function ProviderEconomicsReview({
 
 function DefinitionRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex items-start justify-between gap-4 border-b py-3">
       <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="text-right text-sm tabular-nums">
+      <dd className="text-right text-sm font-medium tabular-nums">
         <MoneyTicker value={value} />
       </dd>
     </div>
@@ -486,7 +487,7 @@ function OrderStatus({
   const copy = stateCopy(order.state);
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 flex flex-col gap-4">
+      <MoneyModalBody className="gap-4 pt-4">
         <h3 className="text-lg font-semibold">{copy.title}</h3>
         <FundingNotice>{copy.body}</FundingNotice>
         {order.instructions ? (
@@ -497,10 +498,10 @@ function OrderStatus({
             Status: {order.providerStatus}
           </p>
         ) : null}
-      </div>
+      </MoneyModalBody>
       {order.state !== "dispatch-ambiguous" ? (
-        <DrawerFooter className="pb-[calc(1rem+env(safe-area-inset-bottom))]">
-          <Button variant="ghost" onClick={onBack}>
+        <DrawerFooter className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <Button className="h-11" size="lg" variant="ghost" onClick={onBack}>
             Back
           </Button>
         </DrawerFooter>

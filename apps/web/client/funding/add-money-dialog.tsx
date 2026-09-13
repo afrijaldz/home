@@ -5,6 +5,7 @@ import { Fragment, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { DrawerFooter } from "@/components/ui/drawer";
 import {
   Item,
@@ -29,7 +30,7 @@ import {
   type RegionId,
 } from "@/config/regions";
 import { formatAddress } from "@/shared/formatting";
-import { MoneyModal, MoneyModalHeader } from "@/client/money-modal";
+import { MoneyModal, MoneyModalBody, MoneyModalHeader } from "@/client/money-modal";
 import { ReceiveQr } from "./receive-qr";
 import {
   FundingOrderFlow,
@@ -122,9 +123,9 @@ export function AddMoneyDialog({
       ) : null}
 
       {signedOut ? (
-        <DrawerFooter className="pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <DrawerFooter className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <Link
-            className={buttonVariants({ size: "lg" })}
+            className={buttonVariants({ size: "lg", className: "h-11" })}
             href="/?account=signin"
           >
             Sign in
@@ -147,72 +148,67 @@ export function MethodBody({
   onSelectBinding: (binding: FundingBinding) => void;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4">
-      <ItemGroup>
-        <Item
-          variant="outline"
-          render={
-            <Button
-              variant="ghost"
-              size="lg"
-              type="button"
-              onClick={onSelectReceive}
-              aria-describedby="receive-method-hint"
-            />
-          }
-        >
-          <ItemMedia variant="icon" className="size-8 rounded-sm bg-muted">
-            <ArrowDownToLine className="size-4" />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>Receive crypto</ItemTitle>
-            <ItemDescription>USDC and supported tokens on Base</ItemDescription>
-            <span id="receive-method-hint" hidden>
-              Open receive options
-            </span>
-          </ItemContent>
-          <ItemActions aria-hidden="true">
-            <ChevronRight className="size-4 text-muted-foreground" />
-          </ItemActions>
-        </Item>
-        {providerBindings.map((binding) => (
-          <Fragment key={`${binding.providerId}:${binding.assetId}`}>
-            <ItemSeparator />
+    <MoneyModalBody className="pt-4">
+      <Card>
+        <CardContent className="px-2">
+          <ItemGroup className="gap-0">
             <Item
-              variant="outline"
               render={
                 <Button
                   variant="ghost"
-                  size="lg"
                   type="button"
-                  onClick={() => onSelectBinding(binding)}
-                  aria-describedby={`funding-method-${binding.providerId}-${binding.assetId}`}
+                  onClick={onSelectReceive}
+                  aria-describedby="receive-method-hint"
                 />
               }
+              className="min-h-16 flex-nowrap items-center rounded-none border-0"
             >
-              <ItemMedia>
-                <CurrencyMark
-                  currency={binding.currency as FiatCurrencyCode}
-                  symbol={presentationRegions[regionId].currency.symbol ?? "$"}
-                />
+              <ItemMedia variant="icon" className="size-10 self-center translate-y-0 rounded-full bg-muted">
+                <ArrowDownToLine className="size-4" />
               </ItemMedia>
-              <ItemContent>
-                <ItemTitle>{`Deposit ${binding.currency} with ${binding.displayName}`}</ItemTitle>
-                <span
-                  id={`funding-method-${binding.providerId}-${binding.assetId}`}
-                  hidden
-                >
-                  Open deposit flow
-                </span>
+              <ItemContent className="min-w-0">
+                <ItemTitle>Receive crypto</ItemTitle>
+                <ItemDescription>USDC and supported tokens on Base</ItemDescription>
+                <span id="receive-method-hint" hidden>Open receive options</span>
               </ItemContent>
               <ItemActions aria-hidden="true">
                 <ChevronRight className="size-4 text-muted-foreground" />
               </ItemActions>
             </Item>
-          </Fragment>
-        ))}
-      </ItemGroup>
-    </div>
+            {providerBindings.map((binding) => (
+              <Fragment key={`${binding.providerId}:${binding.assetId}`}>
+                <ItemSeparator className="my-0" />
+                <Item
+                  render={
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      onClick={() => onSelectBinding(binding)}
+                      aria-describedby={`funding-method-${binding.providerId}-${binding.assetId}`}
+                    />
+                  }
+                  className="min-h-16 flex-nowrap items-center rounded-none border-0"
+                >
+                  <ItemMedia variant="image" className="size-10 self-center translate-y-0 rounded-full bg-muted">
+                    <CurrencyMark
+                      currency={binding.currency as FiatCurrencyCode}
+                      symbol={presentationRegions[regionId].currency.symbol ?? "$"}
+                    />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle>{`Deposit ${binding.currency} with ${binding.displayName}`}</ItemTitle>
+                    <span id={`funding-method-${binding.providerId}-${binding.assetId}`} hidden>Open deposit flow</span>
+                  </ItemContent>
+                  <ItemActions aria-hidden="true">
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  </ItemActions>
+                </Item>
+              </Fragment>
+            ))}
+          </ItemGroup>
+        </CardContent>
+      </Card>
+    </MoneyModalBody>
   );
 }
 export function ReceiveBody({
@@ -223,9 +219,7 @@ export function ReceiveBody({
   regionId: RegionId;
 }) {
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col overflow-auto p-4 items-center gap-4 pt-2 pb-[env(safe-area-inset-bottom)]"
-    >
+    <MoneyModalBody className="items-center gap-4 pt-2">
       <Badge variant="secondary">Receive on Base</Badge>
       <div className="aspect-square w-full max-w-56 overflow-hidden rounded-xl border bg-background">
         {address ? (
@@ -258,7 +252,7 @@ export function ReceiveBody({
         )}
       </div>
       <SupportedAssets regionId={regionId} />
-    </div>
+    </MoneyModalBody>
   );
 }
 
@@ -368,10 +362,10 @@ function supportedRegionalAsset(
 
 function SignedOutBody() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4">
+    <MoneyModalBody className="pt-4">
       <p className="text-sm text-muted-foreground">
         Sign in and verify a Base account before showing a funding address.
       </p>
-    </div>
+    </MoneyModalBody>
   );
 }

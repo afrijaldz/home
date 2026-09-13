@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Check, CircleQuestionMark, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleQuestionMark, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ItemGroup, ItemSeparator } from "@/components/ui/item";
 import { MoneyTicker } from "@/components/money-ticker";
@@ -31,6 +31,7 @@ export function RecentMoneyActions({
   embedded = false,
   showUnavailableNotice = true,
   onVisibleCountChange,
+  limit,
 }: {
   session: VerifiedAccountSession | null;
   fetchOperations: FetchRecentMoneyActions;
@@ -38,6 +39,7 @@ export function RecentMoneyActions({
   embedded?: boolean;
   showUnavailableNotice?: boolean;
   onVisibleCountChange?: (count: number) => void;
+  limit?: number;
 }) {
   const ownerKey = session?.smartAccount ? activityOwnerKey(session) : null;
   const [selected, setSelected] = useState<RecentMoneyActionOperation | null>(null);
@@ -55,7 +57,8 @@ export function RecentMoneyActions({
     },
   });
   const excluded = new Set(Array.from(excludeTransactionHashes, (hash) => hash.toLowerCase()));
-  const operations = dedupeRecentMoneyActions(actions.data ?? [], excluded);
+  const allOperations = dedupeRecentMoneyActions(actions.data ?? [], excluded);
+  const operations = limit === undefined ? allOperations : allOperations.slice(0, limit);
   const unavailable = actions.isError;
   const visibleCount = operations.length + (unavailable && showUnavailableNotice ? 1 : 0);
   useEffect(() => onVisibleCountChange?.(visibleCount), [onVisibleCountChange, visibleCount]);
@@ -90,11 +93,9 @@ function OperationRow({ operation, onActivate }: { operation: RecentMoneyActionO
   const status = labelForOperationStatus(operation.status);
   const date = formatPresentationDate(operation.updatedAt, { style: "activity-short" });
   const value = amount ? `${amount.direction === "spend" ? "−" : "+"}${amount.estimated ? "~" : ""}${formatPresentationTokenAmount(amount.amountBaseUnits, amount.decimals, amount.symbol, { cashCurrency: amount.symbol === "USDC" ? "USD" : null })}` : null;
-  const icon = operation.status === "confirmed"
-    ? <Check className="size-4" />
-    : operation.status === "failed"
-      ? <X className="size-4" />
-      : operation.status === "unknown"
+  const icon = operation.status === "failed"
+    ? <X className="size-4" />
+    : operation.status === "unknown"
         ? <CircleQuestionMark className="size-4" />
         : amount?.direction === "receive"
           ? <ArrowDown className="size-4" />

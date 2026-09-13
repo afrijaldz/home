@@ -1,8 +1,14 @@
 "use client";
 
-import { PiggyBank } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MoneyTicker } from "@/components/money-ticker";
 import type { FetchActivity } from "@/client/activity";
@@ -22,18 +28,23 @@ function SectionHeader({
   headingId,
   title,
   onOpen,
+  actionLabel = "See all",
 }: {
   headingId: string;
-  title: "Balances" | "Activity";
+  title: "Balances" | "Save" | "Activity";
   onOpen: () => void;
+  actionLabel?: "See all" | "Earn";
 }) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <h2 className="text-lg font-semibold" id={headingId}>{title}</h2>
-      <Button size="sm" variant="ghost" onClick={onOpen} aria-label={title}>
-        See all
-      </Button>
-    </div>
+    <>
+      <CardTitle id={headingId} role="heading" aria-level={2}>{title}</CardTitle>
+      <CardAction>
+        <Button size="sm" variant="ghost" onClick={onOpen} aria-label={title}>
+          {actionLabel}
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </Button>
+      </CardAction>
+    </>
   );
 }
 
@@ -83,16 +94,17 @@ export function HomePanel({
     Boolean(balanceStatusLabel);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Card
+        className="py-0"
         aria-label={heroLabel}
         aria-busy={isLoading || isRevalidating || undefined}
       >
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-2 p-5 sm:p-6">
           {isLoading ? (
             <Skeleton className="h-10 w-48" data-shimmer="hero" />
           ) : (
-            <div className="text-4xl font-semibold tracking-tight tabular-nums">
+            <div className="text-4xl font-semibold tabular-nums">
               <MoneyTicker value={assetBalances?.displayTotal ?? "—"} />
             </div>
           )}
@@ -105,7 +117,7 @@ export function HomePanel({
         </CardContent>
       </Card>
 
-      <div className="flex flex-wrap gap-2" aria-label="Money actions">
+      <div className="grid grid-cols-2 gap-2" aria-label="Money actions">
         <FundingActions
           initialOpen={initialAddMoney}
           returnedFromProvider={returnedFromProvider}
@@ -118,40 +130,50 @@ export function HomePanel({
         />
       </div>
 
-      <section className="space-y-3" aria-labelledby="balances-heading">
-        <SectionHeader
-          headingId="balances-heading"
-          title="Balances"
-          onOpen={onOpenBalances}
-        />
-        <HomeBalancesList
-          items={previewHomeBalanceItems(balanceItems)}
-          isLoading={isLoading}
-          isUnavailable={assetBalances?.status === "unavailable"}
-          assetMarkResolution={assetMarkResolution}
-        />
+      <section aria-labelledby="balances-heading">
+        <Card>
+          <CardHeader>
+            <SectionHeader
+              headingId="balances-heading"
+              title="Balances"
+              onOpen={onOpenBalances}
+            />
+          </CardHeader>
+          <CardContent className="px-2">
+            <HomeBalancesList
+              items={previewHomeBalanceItems(balanceItems)}
+              isLoading={isLoading}
+              isUnavailable={assetBalances?.status === "unavailable"}
+              assetMarkResolution={assetMarkResolution}
+            />
+          </CardContent>
+        </Card>
+      </section>
+
+      <section aria-labelledby="save-heading">
+        <Card>
+          <CardHeader>
+            <SectionHeader
+              headingId="save-heading"
+              title="Save"
+              actionLabel="Earn"
+              onOpen={onOpenSave}
+            />
+          </CardHeader>
+          {showSessionShimmer ? (
+            <CardContent className="px-2"><ShimmerRows count={1} /></CardContent>
+          ) : null}
+        </Card>
       </section>
 
       {showSessionShimmer ? (
-        <Button className="h-11 w-full justify-between" variant="outline" onClick={onOpenSave} aria-label="Save">
-          <Skeleton className="size-5" />
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-12" />
-        </Button>
-      ) : (
-        <Button className="h-11 w-full justify-between" variant="outline" onClick={onOpenSave} aria-label="Save">
-          <span className="flex items-center gap-2">
-            <PiggyBank className="size-4" aria-hidden="true" />
-            Save
-          </span>
-          <span className="text-muted-foreground">Earn</span>
-        </Button>
-      )}
-
-      {showSessionShimmer ? (
-        <section className="space-y-3" aria-labelledby="activity-title" aria-busy="true">
-          <SectionHeader headingId="activity-title" title="Activity" onOpen={onOpenActivity} />
-          <ShimmerRows count={2} />
+        <section aria-labelledby="activity-title" aria-busy="true">
+          <Card>
+            <CardHeader>
+              <SectionHeader headingId="activity-title" title="Activity" onOpen={onOpenActivity} />
+            </CardHeader>
+            <CardContent className="px-2"><ShimmerRows count={2} /></CardContent>
+          </Card>
         </section>
       ) : (
         <ConnectedActivityPanel

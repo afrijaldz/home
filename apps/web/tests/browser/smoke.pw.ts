@@ -918,8 +918,12 @@ async function clickForwardAndWaitForUrl(
 ) {
   // A pre-existing Next dev hydration overlay can intercept pointer hit-testing
   // in CI; force still dispatches the real button click and route transition.
-  await page.getByRole("button", { name }).click({ force: true });
-  await expect(page).toHaveURL(expectedUrl);
+  // Right after a route change the button can render before its handler is
+  // hydrated, so a click that produced no navigation is retried (#383).
+  await expect(async () => {
+    await page.getByRole("button", { name }).click({ force: true });
+    await expect(page).toHaveURL(expectedUrl, { timeout: 1_500 });
+  }).toPass({ timeout: 15_000 });
 }
 
 async function expectBalancesReset(page: Page) {
