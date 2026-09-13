@@ -139,6 +139,37 @@ describe("balance observations", () => {
     expect(fixture.enumerations()).toBe(1);
   });
 
+  test("a stale mark during a hot window still forces a full re-observe", async () => {
+    const fixture = setup({});
+    await fixture.store.putObservation(observation());
+    await fixture.store.markHot(8453, owner, new Date("2026-09-13T12:01:00.000Z"));
+    await fixture.store.markStale(8453, owner, new Date("2026-09-13T12:00:20.000Z"));
+    await fixture.service(owner, "US");
+    expect(fixture.reads()).toBe(1);
+    expect(fixture.enumerations()).toBe(1);
+  });
+
+  test("degraded catalog coverage forces a full re-observe", async () => {
+    const fixture = setup({});
+    await fixture.store.putObservation({
+      ...observation(),
+      coverage: { registry: "complete", catalog: "unavailable" },
+    });
+    await fixture.service(owner, "US");
+    expect(fixture.enumerations()).toBe(1);
+  });
+
+  test("partial registry coverage behaves as hot and re-reads only registry", async () => {
+    const fixture = setup({});
+    await fixture.store.putObservation({
+      ...observation(),
+      coverage: { registry: "partial", catalog: "complete" },
+    });
+    await fixture.service(owner, "US");
+    expect(fixture.reads()).toBe(1);
+    expect(fixture.enumerations()).toBe(0);
+  });
+
   test("the 120 second backstop causes a full re-observe", async () => {
     const fixture = setup({ now: "2026-09-13T12:02:01.000Z" });
     await fixture.store.putObservation(observation());
@@ -160,6 +191,30 @@ describe("balance observations", () => {
     expect(snapshot.stale).toBeTrue();
     expect(snapshot.coverage).toEqual({ registry: "partial", catalog: "incomplete" });
     expect(snapshot.fetchedAt).toBe(observedAt);
+  });
+
+  test("a snapshot read failure falls through to a fresh observation", async () => {
+    const memory = new MemoryBalanceSnapshotStore();
+    const fixture = setup({
+      store: Object.assign(memory, {
+        get: async () => { throw new Error("database unavailable"); },
+      }),
+    });
+    const snapshot = await fixture.service(owner, "US");
+    expect(snapshot.stale).toBeUndefined();
+    expect(fixture.reads()).toBe(1);
+  });
+
+  test("an observation write failure still returns the fresh read", async () => {
+    const memory = new MemoryBalanceSnapshotStore();
+    const fixture = setup({
+      store: Object.assign(memory, {
+        putObservation: async () => { throw new Error("database unavailable"); },
+      }),
+    });
+    const snapshot = await fixture.service(owner, "US");
+    expect(snapshot.stale).toBeUndefined();
+    expect(snapshot.fetchedAt).toBe("2026-09-13T12:00:30.000Z");
   });
 
   test("failed initial observation rejects so the route can return 502", async () => {

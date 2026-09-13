@@ -45,6 +45,7 @@ export const SERVER_EVENT_KINDS = [
   "funding-webhook",
   "balances-webhook",
   "balances-webhook-subscription",
+  "balances-store",
 ] as const;
 export const SERVER_EVENT_OUTCOMES = [
   "failed",

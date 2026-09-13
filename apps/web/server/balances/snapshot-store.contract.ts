@@ -43,6 +43,15 @@ export function balanceSnapshotStoreContract(options: {
       });
     });
 
+    test("preserves milliseconds so a same-second stale mark remains signaled", async () => {
+      await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
+      await store.markStale(8453, ADDRESS, new Date("2026-09-13T12:00:10.500Z"));
+      expect(await store.get(8453, ADDRESS)).toMatchObject({
+        observedAt: "2026-09-13T12:00:10.000Z",
+        staleAt: "2026-09-13T12:00:10.500Z",
+      });
+    });
+
     test("signal writers touch only their column", async () => {
       await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
       const original = (await store.get(8453, ADDRESS))!;

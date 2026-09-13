@@ -12,6 +12,7 @@ import { priceBalances as defaultPriceBalances } from "./price";
 import { readBalances as defaultReadBalances } from "./read";
 import { resolveBalances as defaultResolveBalances } from "./resolve";
 import { assembleBalancesSnapshot } from "./snapshot";
+import { emitServerEvent } from "@/server/observability/log";
 import {
   getBalanceSnapshotStore,
   type BalanceSnapshotRow,
@@ -73,11 +74,21 @@ export function createBalancesService(dependencies: Dependencies = {}) {
   }
 
   async function selectObservation(owner: PortfolioAddress): Promise<ObservedResult> {
-    const row = await store.get(BALANCES_CHAIN_ID, owner);
+    let row: BalanceSnapshotRow | null = null;
+    try {
+      row = await store.get(BALANCES_CHAIN_ID, owner);
+    } catch {
+      observeStoreFailure("BALANCE_STORE_READ_FAILED");
+    }
     const current = now();
-    const hot = Boolean(row?.hotUntil) && Date.parse(row!.hotUntil!) > current.getTime();
-    const signaled = Boolean(row?.staleAt) &&
-      Date.parse(row!.staleAt!) > Date.parse(row!.observedAt);
+    const hot = row !== null && (
+      (Boolean(row.hotUntil) && Date.parse(row.hotUntil!) > current.getTime()) ||
+      row.coverage.registry === "partial"
+    );
+    const signaled = row !== null && (
+      (Boolean(row.staleAt) && Date.parse(row.staleAt!) > Date.parse(row.observedAt)) ||
+      row.coverage.catalog === "unavailable"
+    );
     const expired = row !== null &&
       current.getTime() - Date.parse(row.observedAt) > backstopMs;
 
@@ -86,13 +97,21 @@ export function createBalancesService(dependencies: Dependencies = {}) {
     }
 
     try {
-      const observed = hot && row
+      const observed = hot && row && !signaled && !expired
         ? await observeRegistryOnly(owner, row)
         : await observeFull(owner);
-      const wrote = await store.putObservation(observationFromRead(owner, observed));
-      if (!wrote) {
-        const winner = await store.get(BALANCES_CHAIN_ID, owner);
-        if (winner) return { read: readFromRow(winner), stale: false };
+      try {
+        const wrote = await store.putObservation(observationFromRead(owner, observed));
+        if (!wrote) {
+          try {
+            const winner = await store.get(BALANCES_CHAIN_ID, owner);
+            if (winner) return { read: readFromRow(winner), stale: false };
+          } catch {
+            observeStoreFailure("BALANCE_STORE_READ_FAILED");
+          }
+        }
+      } catch {
+        observeStoreFailure("BALANCE_STORE_WRITE_FAILED");
       }
       return { read: observed, stale: false };
     } catch (error) {
@@ -167,6 +186,15 @@ function observationFromRead(
     holdings: read.holdings,
     coverage: read.coverage,
   };
+}
+
+function observeStoreFailure(code: "BALANCE_STORE_READ_FAILED" | "BALANCE_STORE_WRITE_FAILED"): void {
+  emitServerEvent("balances-store", {
+    route: "/api/balances",
+    code,
+    outcome: "unavailable",
+    durationMs: 0,
+  });
 }
 
 function readFromRow(row: BalanceSnapshotRow): BalancesRead {
