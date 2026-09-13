@@ -1,4 +1,4 @@
-import type { MoneyActionDraft, PreparedMoneyAction } from "@/shared/money-actions/types";
+import type { ActionKind, MoneyActionDraft, PreparedMoneyAction } from "@/shared/money-actions/types";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
 import type { BorrowMarketSnapshot } from "@/shared/borrowing/contract";
 import type { BorrowAssetRef, BorrowMarketId } from "./config";
@@ -100,6 +100,12 @@ export function parseBorrowActionIntent(value: unknown): BorrowActionIntent | nu
 export function isBorrowOperation(value: unknown): value is BorrowOperation {
   return value === "supply-collateral" || value === "borrow" || value === "supply-and-borrow" ||
     value === "repay" || value === "repay-all" || value === "withdraw-collateral" || value === "close-position";
+}
+
+export function actionKindForBorrowOperation(operation: BorrowOperation): ActionKind {
+  if (operation === "supply-and-borrow") return "borrow";
+  if (operation === "repay-all" || operation === "close-position") return "repay";
+  return operation;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

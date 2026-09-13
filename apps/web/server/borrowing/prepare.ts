@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ActionKind, MoneyActionAmount, MoneyActionDraft } from "@/shared/money-actions/types";
+import type { MoneyActionAmount, MoneyActionDraft } from "@/shared/money-actions/types";
 import type { BorrowMarketSnapshot } from "@/shared/borrowing/contract";
 import type { BorrowMarketRef } from "@/shared/borrowing/config";
 import {
@@ -20,7 +20,7 @@ import {
   toSharesDown,
   toSharesUp,
 } from "./math";
-import type { BorrowActionIntent, BorrowActionPreparation, BorrowOperation } from "@/shared/borrowing/types";
+import { actionKindForBorrowOperation, type BorrowActionIntent, type BorrowActionPreparation, type BorrowOperation } from "@/shared/borrowing/types";
 import type { BorrowRpcReader } from "./rpc";
 
 const ACTION_EXPIRY_MS = 2 * 60_000;
@@ -46,9 +46,6 @@ export async function prepareBorrowAction(input: {
   }
   if (snapshot.walletAddress.toLowerCase() !== snapshot.walletAddress) throw new BorrowPreparationError("invalid-input", "The verified wallet address is invalid.");
   const operation = request.operation;
-  if (isRiskIncreasing(operation) && market.availability !== "enabled") {
-    throw new BorrowPreparationError("unsupported-market", "This market is available only for risk reduction.");
-  }
 
   const amount = request.amountBaseUnits === undefined ? null : positiveAmount(request.amountBaseUnits);
   const collateralAmount = request.collateralAmountBaseUnits === undefined ? null : positiveAmount(request.collateralAmountBaseUnits);
@@ -61,6 +58,9 @@ export async function prepareBorrowAction(input: {
   const totalBorrowAssets = BigInt(snapshot.state.totalBorrowAssetsRaw);
   const totalBorrowShares = BigInt(snapshot.state.totalBorrowSharesRaw);
   const borrowShares = BigInt(snapshot.position.borrowSharesRaw);
+  if (increasesRisk(operation, debt) && market.availability !== "enabled") {
+    throw new BorrowPreparationError("unsupported-market", "This market is available only for risk reduction.");
+  }
   const calls: MoneyActionDraft["calls"] = [];
   const amounts: MoneyActionAmount[] = [];
   const warnings = ["Morpho rates, oracle prices, liquidity, and debt can change before the wallet submits this action."];
@@ -130,7 +130,7 @@ export async function prepareBorrowAction(input: {
 
   const postRawMaximumDebt = borrowCapacityAssets(postCollateral, oraclePrice, market.lltvWad);
   const postHealth = healthFactorWad(postRawMaximumDebt, postDebt);
-  if (isRiskIncreasing(operation) && postDebt > BigInt(0) && (postHealth === null || postHealth < BORROW_HEALTH_FLOOR_WAD)) {
+  if (increasesRisk(operation, debt) && postDebt > BigInt(0) && (postHealth === null || postHealth < BORROW_HEALTH_FLOOR_WAD)) {
     throw new BorrowPreparationError("limit-exceeded", "This action would leave the position below Home's 1.25 health factor floor.");
   }
   if (postHealth !== null && postHealth < BORROW_HEALTH_CRITICAL_WAD) warnings.push("This review leaves the position in the critical health band.");
@@ -170,11 +170,6 @@ export async function prepareBorrowAction(input: {
   }
 }
 
-export function actionKindForBorrowOperation(operation: BorrowOperation): ActionKind {
-  if (operation === "supply-and-borrow") return "borrow";
-  if (operation === "repay-all" || operation === "close-position") return "repay";
-  return operation;
-}
 function exactApproval(calls: MoneyActionDraft["calls"], token: BorrowMarketRef["loanToken"], spender: BorrowMarketRef["morpho"], amount: bigint, allowance: bigint) {
   if (allowance !== amount) calls.push(approveCall(token, spender, amount));
 }
@@ -185,7 +180,10 @@ function positiveAmount(value: string) { const amount = BigInt(value); if (amoun
 function required(value: bigint | null): bigint { if (value === null) throw new BorrowPreparationError("invalid-input", "The required amount is missing."); return value; }
 function requireAtMost(amount: bigint, maximum: bigint, message: string) { if (amount > maximum) throw new BorrowPreparationError("limit-exceeded", message); }
 function requireDebt(debt: bigint, shares: bigint) { if (debt === BigInt(0) || shares === BigInt(0)) throw new BorrowPreparationError("limit-exceeded", "There is no current debt to repay in this market."); }
-function isRiskIncreasing(operation: BorrowOperation) { return operation === "borrow" || operation === "supply-and-borrow" || operation === "withdraw-collateral"; }
+function increasesRisk(operation: BorrowOperation, debt: bigint) {
+  return operation === "borrow" || operation === "supply-and-borrow" ||
+    (operation === "withdraw-collateral" && debt > BigInt(0));
+}
 function titleFor(operation: BorrowOperation, market: BorrowMarketRef) {
   switch (operation) {
     case "supply-collateral": return `Add ${market.collateralToken.symbol} collateral`;

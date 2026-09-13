@@ -61,12 +61,17 @@ import { readAnonymousCountryPreference } from "@/config/country-preference";
 import { resolvePresentation, type RegionId } from "@/config/regions";
 import {
   BORROW_COLLATERAL_TOKEN,
+  BORROW_HEALTH_BUFFER_WAD,
+  BORROW_HEALTH_CRITICAL_WAD,
+  BORROW_HEALTH_FLOOR_WAD,
+  BORROW_LIQUIDATION_HEALTH_WAD,
   BORROW_LOAN_TOKEN,
   BORROW_MARKET_ID,
 } from "@/shared/borrowing/config";
-import type {
-  BorrowOperation,
-  BorrowPreviewResponse,
+import {
+  actionKindForBorrowOperation,
+  type BorrowOperation,
+  type BorrowPreviewResponse,
 } from "@/shared/borrowing/types";
 import {
   parseSnapshot,
@@ -217,7 +222,7 @@ function BorrowExperienceInner({
     try {
       const amountBaseUnits = parseClientTokenAmount(amount, actionAsset.decimals);
       const action = await prepareMoneyAction(
-        operation === "repay-all" ? "repay" : operation,
+        actionKindForBorrowOperation(operation),
         operation === "repay-all"
           ? { marketId: snapshot.market.id, operation, maximumRepayBaseUnits: amountBaseUnits }
           : { marketId: snapshot.market.id, operation, amountBaseUnits },
@@ -733,11 +738,13 @@ function BorrowNotice({
 function healthNote(raw: string | null) {
   if (raw === null) return "No active liquidation threshold";
   const health = BigInt(raw);
-  if (health < BigInt("1000000000000000000"))
+  if (health < BORROW_LIQUIDATION_HEALTH_WAD)
     return "At or below the indexed liquidation threshold";
-  if (health < BigInt("1100000000000000000"))
+  if (health < BORROW_HEALTH_CRITICAL_WAD)
     return "Very close to liquidation";
-  if (health < BigInt("1250000000000000000"))
+  if (health < BORROW_HEALTH_FLOOR_WAD)
+    return "Below Home's new-risk health floor";
+  if (health < BORROW_HEALTH_BUFFER_WAD)
     return "Limited liquidation buffer";
   return "Above the indexed liquidation threshold";
 }

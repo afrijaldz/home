@@ -4,7 +4,9 @@ Jesse-locked September 13, 2026 ([#395](https://github.com/jessepollak/home/issu
 
 ## Launch boundary
 
-Borrow uses a compile-time `BorrowMarketRef` registry on Base. Launch enables only the verified Morpho USDC/cbBTC isolated market. The reader, integer math, calldata builders, and action preparation are market-parameterized so another reviewed isolated market is a registry entry plus fixtures, not a second protocol integration. Home does not load a permissionless market catalog or run background alerts.
+Borrow uses an operator-controlled, compile-time `BorrowMarketRef` registry on Base. That registry—not Morpho API discovery, protocol listing state, or a permissionless catalog—controls which markets Home advertises and enables for new risk. Launch enables only the verified Morpho USDC/cbBTC isolated market. The reader, integer math, calldata builders, and action preparation are market-parameterized so another reviewed isolated market is a registry entry plus fixtures, not a second protocol integration. Home does not load a permissionless market catalog or run background alerts.
+
+Removing or warning a market must not remove management access for an existing position. Operators retain its trusted registry tuple and change it to `reducing-only`; repay, repay-all, close, add-collateral, and zero-debt collateral withdrawal remain available when their required reads verify, while borrow-more and debt-bearing collateral withdrawal remain blocked.
 
 Every detail read and action prepare verifies `idToMarketParams` against the trusted registry tuple at a pinned block. The server derives the owner, `onBehalf`, receiver, Morpho deployment, tokens, oracle, IRM, and LLTV. It simulates the exact ordered Coinbase smart-account batch and reconfirms the pinned block hash. The client sends only a configured market id, an operation, and decimal-integer base-unit amounts.
 

@@ -23,6 +23,7 @@ type ToastAction = {
       amountBaseUnits: string;
       direction: "spend" | "receive";
       estimated?: boolean;
+      maximum?: boolean;
     }>;
     warnings: string[];
   };
@@ -60,7 +61,7 @@ export function ActionToasts({
     add({ message, tone, role, duration: dismissAfterMs });
   }, [add, dismissAfterMs]);
 
-  useEffect(() => () => closeAll(), [closeAll, ownerKey]);
+  useEffect(() => () => closeAll(), [closeAll]);
 
   useEffect(() => {
     if (!actions.data || !ownerKey) return;
@@ -95,7 +96,7 @@ export function ActionToasts({
     return () => window.removeEventListener(actionFailureEvent, onFailure);
   }, [addToast]);
 
-  return <Toaster key={ownerKey ?? "signed-out"} />;
+  return <Toaster />;
 }
 
 function parseToastActions(value: unknown): ToastAction[] {
@@ -114,6 +115,7 @@ function parseToastActions(value: unknown): ToastAction[] {
         amountBaseUnits: amount.amountBaseUnits,
         direction: amount.direction as "spend" | "receive",
         ...(amount.estimated === true ? { estimated: true } : {}),
+        ...(amount.maximum === true ? { maximum: true } : {}),
       }];
     });
     return [{
@@ -132,11 +134,18 @@ function parseToastActions(value: unknown): ToastAction[] {
 }
 
 function actionToastMessage(action: ToastAction, status: ToastAction["status"]): string | null {
-  const operation = operationKind(action.kind, action.summary.metadata?.operation);
+  const borrowOperation = action.summary.metadata?.operation;
+  const operation = operationKind(action.kind, borrowOperation);
+  if (borrowOperation === "repay-all") {
+    return status === "pending" ? "Repaying all Borrow debt" : "Repaid all Borrow debt";
+  }
+  if (borrowOperation === "close-position") {
+    return status === "pending" ? "Closing Borrow position" : "Closed Borrow position";
+  }
   const amount = action.summary.amounts.find((candidate) =>
     operation === "withdraw" || operation === "borrow"
-      ? candidate.direction === "receive" && !candidate.estimated
-      : candidate.direction === "spend" && !candidate.estimated,
+      ? candidate.direction === "receive" && !candidate.estimated && !candidate.maximum
+      : candidate.direction === "spend" && !candidate.estimated && !candidate.maximum,
   );
   if (!amount) return null;
   const formatted = amount.symbol === "USDC"

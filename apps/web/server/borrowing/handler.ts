@@ -4,6 +4,7 @@ import { ACCOUNT_PROVIDER_HEADER } from "@/shared/account/session-types";
 import { BORROW_MARKETS, getBorrowMarketRef } from "@/shared/borrowing/config";
 import type { BorrowOverviewResponse, BorrowResponse } from "@/shared/borrowing/contract";
 import { authorizeSession, type SessionAuthorizer } from "@/server/auth/authorize";
+import { emitServerEvent } from "@/server/observability/log";
 import type { BorrowRpcReader } from "./rpc";
 
 const privateHeaders = {
@@ -17,10 +18,19 @@ export function createBorrowHandler(dependencies: { authorize: SessionAuthorizer
     const session = await authorizeSession(request, dependencies.authorize);
     if (session instanceof Response) return session;
     if (!session.smartAccount) return privateError("SMART_ACCOUNT_UNAVAILABLE", "A verified Base smart account is not available yet.", 503);
+    const startedAt = Date.now();
     const results = await Promise.all(BORROW_MARKETS.map(async (market) => {
       try {
         return { market, snapshot: await dependencies.rpc.readSnapshot(session.smartAccount!.address, market, request.signal), error: null } as const;
       } catch {
+        emitServerEvent("borrow-overview", {
+          route: "/api/borrow",
+          code: "BORROW_MARKET_READ_UNAVAILABLE",
+          outcome: "unavailable",
+          provider: "base-rpc",
+          owner: { subject: session.user.subject, accountProvider: session.accountProvider },
+          durationMs: Date.now() - startedAt,
+        });
         return { market, snapshot: null, error: "Current verified chain state is unavailable for this market." } as const;
       }
     }));

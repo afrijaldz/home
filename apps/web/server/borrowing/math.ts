@@ -135,8 +135,28 @@ export function minimumCollateralForHealthFactor(
   if (oraclePrice === BigInt("0") || lltvWad === BigInt("0") || healthFactorWad < WAD) {
     throw new RangeError("Oracle price, LLTV, and health factor must be valid.");
   }
-  const requiredValue = mulDivUp(debtAssets, healthFactorWad, lltvWad);
-  return mulDivUp(requiredValue, ORACLE_PRICE_SCALE, oraclePrice);
+
+  // Invert the exact nested floors used by borrowCapacityAssets. A pair of
+  // independent ceil divisions can still leave the advertised boundary one
+  // collateral unit short when asset decimals and oracle scaling differ.
+  const requiredMaximumDebt = mulDivUp(debtAssets, healthFactorWad, WAD);
+  let high = mulDivUp(
+    mulDivUp(requiredMaximumDebt, WAD, lltvWad),
+    ORACLE_PRICE_SCALE,
+    oraclePrice,
+  );
+  if (high === BigInt("0")) high = BigInt("1");
+  while (borrowCapacityAssets(high, oraclePrice, lltvWad) < requiredMaximumDebt) {
+    high *= BigInt("2");
+  }
+
+  let low = BigInt("0");
+  while (low < high) {
+    const midpoint = (low + high) / BigInt("2");
+    if (borrowCapacityAssets(midpoint, oraclePrice, lltvWad) >= requiredMaximumDebt) high = midpoint;
+    else low = midpoint + BigInt("1");
+  }
+  return low;
 }
 
 export function liquidationPriceRaw(
