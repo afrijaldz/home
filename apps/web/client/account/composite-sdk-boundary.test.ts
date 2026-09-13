@@ -221,6 +221,11 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
         initializationError: "provider-unavailable",
         restore,
       })).retryInitialization).toBe(restore);
+      expect(composeSdkBoundaries(input({
+        cdp: { isSignedIn: true, ownerKey: "cdp-owner" },
+        initializationError: "provider-unavailable",
+        restore,
+      })).retryInitialization).toBeUndefined();
     },
   },
   {

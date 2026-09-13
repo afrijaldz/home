@@ -30,7 +30,9 @@ export function composeSdkBoundaries({
     ...(isInitialized && native.initializationError && !cdp.isSignedIn
       ? { initializationError: native.initializationError }
       : {}),
-    retryInitialization: native.initializationError ? native.restore : undefined,
+    retryInitialization: isInitialized && native.initializationError && !cdp.isSignedIn
+      ? native.restore
+      : undefined,
     isInitialized,
     isSignedIn: nativeSignedIn || cdpSignedIn,
     ownerKey: nativeSignedIn ? native.boundary.ownerKey : cdpSignedIn ? cdp.ownerKey : null,
