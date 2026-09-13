@@ -256,6 +256,32 @@ describe("owner generation fence", () => {
     }
   });
 
+  test("signs the SDK out when CDP session validation returns 401", async () => {
+    let verificationLost = false;
+    let signOutCalls = 0;
+    render(
+      <AccountWalletSessionOwner
+        sdk={sdk({
+          provisionalSession: session("cdp-embedded"),
+          signOut: async () => { signOutCalls += 1; },
+        })}
+        sessionFetch={async () => verificationLost
+          ? new Response(null, { status: 401 })
+          : Response.json(session("cdp-embedded"))}
+      >
+        <ClientProbe />
+      </AccountWalletSessionOwner>,
+    );
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+
+    verificationLost = true;
+    await act(async () => { await currentClient().retrySessionValidation(); });
+
+    await waitFor(() => expect(currentClient().status).toBe("signed-out"));
+    expect(currentClient().message).toBe("You are signed out.");
+    expect(signOutCalls).toBe(1);
+  });
+
   test("clears the CDP render hint synchronously with private session state", async () => {
     let finishSignOut!: () => void;
     const signOutPending = new Promise<void>((resolve) => { finishSignOut = resolve; });
