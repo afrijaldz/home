@@ -1,6 +1,6 @@
 # Balances: one snapshot, every row, cached on the device
 
-Status: **G1 CDP-first server, G2 deletion, G3 server observation, and G4 dust default shipped** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
+Status: **G1 CDP-first server, G2 deletion, G3 server observation, G3b production completeness, G3c latency/price observations, and G4 dust default shipped** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
 
 ## What Jesse asked for
 
@@ -34,7 +34,7 @@ Status: **G1 CDP-first server, G2 deletion, G3 server observation, and G4 dust d
 
 The server has two bounded inputs with different freshness and authority:
 
-1. **Enumerate per owner.** CDP Token Balances scans up to 32 pages at the documented maximum of 100 rows per page (3,200 rows). It returns lowercase ERC-20 contract addresses, decimal-integer-string amounts, and optional trimmed `name`, `symbol`, and `decimals`. The native `0xeeee…` sentinel is excluded because ETH is read from the registry path. One in-flight scan is shared per owner, cached for 60 s in a 256-owner LRU, detached from route caller aborts, and bounded by its own 8 s deadline. A deadline after one or more pages preserves those rows and marks the scan incomplete.
+1. **Enumerate per owner.** CDP Token Balances scans up to 32 pages at the documented maximum of 100 rows per page (3,200 rows). It returns lowercase ERC-20 contract addresses, decimal-integer-string amounts, and optional trimmed `name`, `symbol`, and `decimals`. The native `0xeeee…` sentinel is excluded because ETH is read from the registry path. One in-flight scan is shared per owner, detached from route caller aborts, and bounded by its own 8 s deadline. A deadline after one or more pages preserves those rows, marks the scan incomplete, and stores the next page cursor so the next full observation resumes instead of restarting.
 2. **Read the registry.** `server/balances/universe.ts` contains only configured direct assets and vault shares from `config/portfolio-assets.ts`. Registry ordering stays cash → native → other direct assets → vaults. It never expands to the Codex catalog and never performs a 512-contract `decimals()` verification.
 
 CDP supplies display-grade quantities only for positive non-registry rows. Registry quantities, including ETH and vault shares, always come from the pinned Base read. This deliberately gives action-relevant assets a coherent block while allowing Home to show tokens discovered by the wallet index.
@@ -48,7 +48,7 @@ CDP supplies display-grade quantities only for positive non-registry rows. Regis
 3. One batch converts positive vault shares with `convertToAssets(shares)` and re-reads the pinned block. A changed hash re-pins and retries the whole read once; a second mismatch fails.
 4. A failed registry call is retried once. A successful zero is `"0"`; a failed read is `unavailable`, never zero. The whole read retains its 4 s deadline.
 
-The hosted public-default guard is unchanged: preview/production never uses an implicit public RPC for registry quantities, marks those rows unavailable, and emits one `portfolio-balance-source` event per read. There is no catalog chunk and no sequential-public-catalog branch. Until §8 lands, the pinned registry read keeps a separate 2 s per-owner TTL so post-action polling can refresh configured ids without forcing a new CDP scan; §8 replaces that TTL with the snapshot row's hot window and keeps only in-flight dedupe per instance.
+The hosted public-default guard is unchanged: preview/production never uses an implicit public RPC for registry quantities, marks those rows unavailable, and emits one `portfolio-balance-source` event per read. There is no catalog chunk and no sequential-public-catalog branch. The snapshot row's hot window drives post-action registry refreshes; instances keep only in-flight dedupe.
 
 ### Resolve
 
@@ -68,7 +68,7 @@ The Codex catalog reader remains the three-page, 512-entry, 60 s shared cache. I
 
 - The full registry ERC-20/vault-underlying input set remains one stable batch on every pricing pass.
 - Positive `catalog` rows are priced in batches of 25 and retain the ≥ $100k liquidity, ≥ $10k 24 h volume market gate for the total.
-- A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
+- A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Fresh quotes are stored once per asset in `price_observations`, and a cold instance or failed Codex batch may reuse the newest stored quote inside that bound. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
 - Codex-enriched `wallet` rows share the catalog 25-token price batches and market gate; unknown quantity-only rows return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
 - ETH and FX continue to use Coinbase exchange rates. Cash rows still get `cashValue` in their own denomination.
 - `total.status` is determined from registry rows only. Gated-in catalog values add to the amount without changing status.
@@ -193,13 +193,14 @@ Additive first, deletions last. No lane deletes something another lane's consume
 | **B2/B3 client + proof** (complete) | client selectors/query/persistence and smoke fixtures | one persisted v3 query and shared rows | — |
 | **B4/G2 deletion** (complete) | legacy `server/portfolio/**`, old routes/types/client imports | repoint any final consumers to balances-owned modules | legacy valuation/inventory/recognized paths and temporary re-export shims |
 | **G3 server observation** (complete) | `server/balances/{snapshot-store,webhook}.ts`, migration, `/confirm` + `/handle` hot window, `POST /api/webhooks/cdp`, subscription registration, `stale` on the contract + presenter age | §8 | per-instance TTL caches |
+| **G3b production completeness** (complete) | registry icons, 24 h display-price freshness, Codex wallet enrichment and pricing | decisions 6–8 | — |
+| **G3c latency + price observations** (complete) | four-way Codex price concurrency, bounded-enumeration resume, per-request read timing, per-asset price observations, doc/test drift | §1, §3, §8 | — |
 | **G4 dust default** (complete) | `shared/balances/present.ts`, Your money list control, Account preference | §9 | — |
 
 G1 moved CDP Token Balances and Coinbase FX into `server/balances/`; G2 removed the temporary re-export shims with the legacy importers. Valuation math now lives in `shared/balances/math.ts` and presentation fiat formatting in `shared/formatting/presentation-fiat.ts`. Keep unchanged: `recognized-catalog.ts`, `raw-quotes.ts`, `server/chain/rpc.ts`, `MoneyTicker`, `BalanceRow`, `CurrencyMark`, and asset-mark.
 
 ## Next
 
-- Enrich `wallet` rows through a Codex lookup by contract address so they can gain images and liquidity/volume evidence, then apply the same display and total market gates.
 - Add a second enumerator only if preview evidence shows CDP's curated index is too thin for tokens users expect to see.
 - Measure on preview: CDP index lag after a Send, Jesse's wallet row count, and Jesse's page count at 100 rows per page.
 
@@ -214,9 +215,11 @@ Actions remain registry-only until a separate product decision extends Send.
 | Read dedupe (per instance) | in-flight only | concurrent regions/tabs share one owner observation; no completed-value TTL |
 | CDP enumeration dedupe | in-flight only | completed enumeration lives only in `balance_snapshots` |
 | Read deadline | 4 s | shorter than the 6 s per-call RPC timeout; a timeout fails the read and the client keeps previous data |
-| Enumeration deadline | 8 s | returns collected rows with `incomplete` |
+| Enumeration deadline | 8 s + resume cursor | returns collected rows with `incomplete`; the next full observation continues from the stored page token |
+| Price batch concurrency | 4 | bounds concurrent Codex batches while avoiding sequential latency |
 | Hot window | 60 s | set by `/confirm` and `/handle`; registry re-read on every request |
 | Backstop | 120 s | full re-observe when no signal arrived |
+| Price maximum age | 24 h | newest per-asset observation inside this bound may value balances |
 | Codex prices / Coinbase FX | 45 s / 60 s | global, shared across users |
 | Market gate | ≥ $100k liquidity, ≥ $10k 24 h volume, fresh price | catalog rows enter the total (#337) |
 

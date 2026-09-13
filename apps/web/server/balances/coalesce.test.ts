@@ -76,28 +76,43 @@ function setup(options: {
   store?: MemoryBalanceSnapshotStore;
   now?: string;
   registryRead?: () => Promise<BalancesRead>;
-  enumerate?: () => Promise<BalancesEnumeration>;
+  enumerate?: (cursor?: string | null) => Promise<BalancesEnumeration>;
 }) {
   const store = options.store ?? new MemoryBalanceSnapshotStore();
+  const events: unknown[] = [];
   let reads = 0;
   let enumerations = 0;
+  let clock = 0;
   const service = createBalancesService({
     store,
     now: () => new Date(options.now ?? "2026-09-13T12:00:30.000Z"),
+    nowMs: () => clock++,
+    log: (event) => events.push(event),
     readUniverse: async () => ({ entries: [] }),
     readBalances: async () => {
       reads += 1;
       return options.registryRead?.() ?? read("11", "2026-09-13T12:00:30.000Z", [registry]);
     },
-    enumerateBalances: async () => {
+    enumerateBalances: async (_owner, _signal, cursor) => {
       enumerations += 1;
-      return options.enumerate?.() ?? { status: "complete", rows: [] };
+      return options.enumerate?.(cursor) ?? { status: "complete", rows: [], nextCursor: null, pagesRead: 1, durationMs: 1 };
     },
     resolveBalances: async (registryRead, enumeration) => ({
       ...registryRead,
       holdings: enumeration.status === "unavailable"
         ? registryRead.holdings
-        : [...registryRead.holdings, catalog],
+        : [
+            ...registryRead.holdings,
+            ...(enumeration.rows.length === 0
+              ? [catalog]
+              : enumeration.rows.map((row) => ({
+                  ...catalog,
+                  key: `eip155:8453/erc20:${row.contractAddress}` as const,
+                  id: `catalog:${row.contractAddress}`,
+                  contractAddress: row.contractAddress,
+                  balance: { status: "ready" as const, baseUnits: row.amountBaseUnits },
+                }))),
+          ],
       coverage: {
         registry: registryRead.coverage.registry,
         catalog: enumeration.status === "unavailable" ? "unavailable" : "complete",
@@ -105,7 +120,13 @@ function setup(options: {
     }),
     priceBalances: async (value) => priced(value.holdings),
   });
-  return { store, service, reads: () => reads, enumerations: () => enumerations };
+  return {
+    store,
+    service,
+    events,
+    reads: () => reads,
+    enumerations: () => enumerations,
+  };
 }
 
 describe("balance observations", () => {
@@ -117,6 +138,58 @@ describe("balance observations", () => {
     expect(snapshot.stale).toBeUndefined();
     expect(fixture.reads()).toBe(0);
     expect(fixture.enumerations()).toBe(0);
+  });
+
+  test("emits one balances-read event with stage durations and coverage", async () => {
+    const fixture = setup({});
+    await fixture.store.putObservation(observation());
+    await fixture.service(owner, "US");
+    expect(fixture.events).toEqual([{
+      kind: "balances-read",
+      route: "/api/balances",
+      outcome: "served-row",
+      durationMs: {
+        "store-read": 1,
+        enumerate: 0,
+        "registry-read": 0,
+        resolve: 0,
+        price: 1,
+        "store-write": 0,
+        total: expect.any(Number),
+      },
+      coverage: { registry: "complete", catalog: "complete" },
+    }]);
+  });
+
+  test("resumes a bounded enumeration, merges stored rows, and clears the cursor", async () => {
+    const nextAddress = "0x2222222222222222222222222222222222222222" as const;
+    const cursors: Array<string | null | undefined> = [];
+    const fixture = setup({
+      enumerate: async (cursor) => {
+        cursors.push(cursor);
+        return {
+          status: "complete",
+          rows: [{ contractAddress: nextAddress, amountBaseUnits: "3" }],
+          nextCursor: null,
+          pagesRead: 1,
+          durationMs: 5,
+        };
+      },
+    });
+    await fixture.store.putObservation(observation({ enumerationCursor: "page-two" }));
+
+    const snapshot = await fixture.service(owner, "US");
+    expect(cursors).toEqual(["page-two"]);
+    expect(snapshot.holdings.map(({ contractAddress }) => contractAddress)).toContain(
+      catalog.contractAddress,
+    );
+    expect(snapshot.holdings.map(({ contractAddress }) => contractAddress)).toContain(
+      nextAddress,
+    );
+    expect((await fixture.store.get(8453, owner))?.enumerationCursor).toBeNull();
+
+    await fixture.service(owner, "DE");
+    expect(fixture.enumerations()).toBe(1);
   });
 
   test("hot rows re-read registry only and retain catalog rows", async () => {

@@ -31,8 +31,14 @@ import type {
   PriceQuote,
 } from "@/shared/balances/quotes";
 import type { BalancesRead, ReadHolding } from "./types";
+import {
+  getPriceObservationStore,
+  type PriceObservation,
+  type PriceObservationStore,
+} from "./price-observation-store";
 
 const PRICE_BATCH_SIZE = 25;
+export const BALANCES_PRICE_CONCURRENCY = 4;
 const LIQUIDITY_GATE = {
   numerator: BigInt(100_000),
   denominator: BigInt(1),
@@ -53,12 +59,16 @@ type Dependencies = {
     options?: { freshnessMs?: number },
   ) => Promise<PriceQuote[]>;
   readExchangeRates?: () => Promise<ExchangeRates>;
+  priceStore?: PriceObservationStore;
+  now?: () => Date;
 };
 
 export function createBalancesPricer(dependencies: Dependencies = {}) {
   const readPrices = dependencies.readPrices ?? getCodexRawQuotes;
   const readExchangeRates = dependencies.readExchangeRates
     ?? getCoinbaseExchangeRates;
+  const priceStore = dependencies.priceStore ?? getPriceObservationStore();
+  const now = dependencies.now ?? (() => new Date());
 
   return async function priceBalances(
     read: BalancesRead,
@@ -80,21 +90,23 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
         )
         .map(pricingInput),
     );
-    const priceBatches: PriceQuote[][] = [];
+    const inputBatches: CodexRawQuoteInput[][] = [];
 
     if (registryInputs.length > 0) {
-      priceBatches.push(await readPriceBatch(readPrices, registryInputs));
+      inputBatches.push(registryInputs);
     }
     for (
       let index = 0;
       index < discoveredInputs.length;
       index += PRICE_BATCH_SIZE
     ) {
-      priceBatches.push(await readPriceBatch(
-        readPrices,
-        discoveredInputs.slice(index, index + PRICE_BATCH_SIZE),
-      ));
+      inputBatches.push(discoveredInputs.slice(index, index + PRICE_BATCH_SIZE));
     }
+    const priceBatches = await mapWithConcurrency(
+      inputBatches,
+      BALANCES_PRICE_CONCURRENCY,
+      (inputs) => readPriceBatch(readPrices, inputs),
+    );
 
     let rates: ExchangeRates | null = null;
     if (read.holdings.some(positivePricingAmount)) {
@@ -105,7 +117,11 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
       }
     }
 
-    const prices = priceBatches.flat();
+    const prices = await persistAndRestorePrices(
+      priceBatches.flat(),
+      priceStore,
+      now(),
+    );
     return read.holdings.map((holding) =>
       priceHolding(holding, quoteCurrency, prices, rates),
     );
@@ -359,6 +375,84 @@ function uniqueInputs(
     byKey.set(input.assetKey, input);
   }
   return [...byKey.values()];
+}
+
+async function persistAndRestorePrices(
+  prices: readonly PriceQuote[],
+  store: PriceObservationStore,
+  currentTime: Date,
+): Promise<PriceQuote[]> {
+  const observations = prices.flatMap((price): PriceObservation[] =>
+    price.status === "fresh" && price.unitPrice && price.source.asOf
+      ? [{
+          assetKey: price.assetKey,
+          unitPrice: price.unitPrice,
+          asOf: price.source.asOf,
+          fetchedAt: price.source.fetchedAt,
+        }]
+      : []);
+  try {
+    await store.putMany(observations);
+  } catch {
+    // Persistence is a best-effort cross-instance fallback, never a read failure.
+  }
+
+  const fallbackKeys = prices.flatMap((price) =>
+    price.status === "fresh" ? [] : [price.assetKey]);
+  if (fallbackKeys.length === 0) return [...prices];
+
+  let stored: PriceObservation[];
+  try {
+    stored = await store.getMany(fallbackKeys);
+  } catch {
+    return [...prices];
+  }
+  const storedByKey = new Map(stored.flatMap((observation) => {
+    const asOfMs = Date.parse(observation.asOf);
+    return Number.isFinite(asOfMs) &&
+        currentTime.getTime() - asOfMs <= BALANCES_PRICE_MAX_AGE_MS
+      ? [[observation.assetKey, observation] as const]
+      : [];
+  }));
+
+  return prices.map((price) => {
+    if (price.status === "fresh") return price;
+    const observation = storedByKey.get(price.assetKey);
+    if (!observation) return price;
+    return {
+      ...price,
+      unitPrice: observation.unitPrice,
+      status: "fresh",
+      source: {
+        provider: "Codex",
+        method: "Stored price observation",
+        fetchedAt: observation.fetchedAt,
+        asOf: observation.asOf,
+        timeBasis: "provider-as-of",
+      },
+    };
+  });
+}
+
+export async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  map: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await map(values[index]!, index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 async function readPriceBatch(

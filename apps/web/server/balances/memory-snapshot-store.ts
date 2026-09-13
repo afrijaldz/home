@@ -23,6 +23,7 @@ export class MemoryBalanceSnapshotStore implements BalanceSnapshotStore {
       address: row.address.toLowerCase() as `0x${string}`,
       staleAt: existing?.staleAt ?? null,
       hotUntil: existing?.hotUntil ?? null,
+      enumerationCursor: row.enumerationCursor ?? null,
     }));
     return true;
   }

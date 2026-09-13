@@ -19,7 +19,13 @@ function deferred<T>() {
 
 describe("balances enumeration in-flight dedupe", () => {
   test("dedupes in-flight enumeration and keeps it alive after caller abort", async () => {
-    const gate = deferred<{ balances: [typeof row]; complete: true }>();
+    const gate = deferred<{
+      balances: [typeof row];
+      complete: true;
+      nextPageToken: null;
+      pagesRead: number;
+      durationMs: number;
+    }>();
     let calls = 0;
     let receivedSignal: AbortSignal | undefined;
     const enumerate = createBalancesEnumerator({
@@ -34,7 +40,7 @@ describe("balances enumeration in-flight dedupe", () => {
     const waiter = enumerate(owner);
     controller.abort();
     expect(receivedSignal?.aborted).toBeFalse();
-    gate.resolve({ balances: [row], complete: true });
+    gate.resolve({ balances: [row], complete: true, nextPageToken: null, pagesRead: 1, durationMs: 1 });
     await expect(first).resolves.toMatchObject({ status: "complete" });
     await expect(waiter).resolves.toMatchObject({ status: "complete" });
     expect(calls).toBe(1);
@@ -45,7 +51,7 @@ describe("balances enumeration in-flight dedupe", () => {
     const enumerate = createBalancesEnumerator({
       listBalances: async () => {
         calls += 1;
-        return { balances: [row], complete: true };
+        return { balances: [row], complete: true, nextPageToken: null, pagesRead: 1, durationMs: 1 };
       },
     });
     await enumerate(owner);
@@ -64,16 +70,25 @@ describe("balances enumeration in-flight dedupe", () => {
           unavailable = false;
           throw new CdpTokenBalancesError("not-configured", "missing credentials");
         }
-        return { balances: [row], complete: false };
+        return { balances: [row], complete: false, nextPageToken: "page-two", pagesRead: 1, durationMs: 1 };
       },
       log: (event) => events.push(event),
     });
-    await expect(enumerate(owner)).resolves.toEqual({ status: "unavailable", rows: [] });
+    await expect(enumerate(owner)).resolves.toMatchObject({ status: "unavailable", rows: [], pagesRead: 0 });
     await expect(enumerate(owner)).resolves.toMatchObject({ status: "incomplete" });
     expect(calls).toBe(2);
     expect(events).toMatchObject([
-      { outcome: "unavailable", reason: "not-configured" },
-      { outcome: "incomplete", reason: "partial" },
+      {
+        outcome: "unavailable",
+        reason: "not-configured",
+        pageCount: 0,
+      },
+      {
+        outcome: "incomplete",
+        reason: "partial",
+        pageCount: 1,
+        durationMs: 1,
+      },
     ]);
   });
 });

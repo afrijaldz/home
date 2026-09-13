@@ -15,11 +15,15 @@ export type BalanceSnapshotRow = {
   observedAt: string;
   staleAt: string | null;
   hotUntil: string | null;
+  enumerationCursor: string | null;
   holdings: ReadHolding[];
   coverage: BalancesCoverage;
 };
 
-export type BalanceObservation = Omit<BalanceSnapshotRow, "staleAt" | "hotUntil">;
+export type BalanceObservation = Omit<
+  BalanceSnapshotRow,
+  "staleAt" | "hotUntil" | "enumerationCursor"
+> & { enumerationCursor?: string | null };
 
 export interface BalanceSnapshotStore {
   get(chainId: number, address: `0x${string}`): Promise<BalanceSnapshotRow | null>;
@@ -47,19 +51,21 @@ export class PostgresBalanceSnapshotStore implements BalanceSnapshotStore {
   async putObservation(row: BalanceObservation): Promise<boolean> {
     const result = await this.sql.query(
       `INSERT INTO balance_snapshots
-       (chain_id,address,block_number,block_hash,block_timestamp,observed_at,holdings,coverage)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)
+       (chain_id,address,block_number,block_hash,block_timestamp,observed_at,enumeration_cursor,holdings,coverage)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
        ON CONFLICT (chain_id,address) DO UPDATE SET
          block_number=EXCLUDED.block_number,
          block_hash=EXCLUDED.block_hash,
          block_timestamp=EXCLUDED.block_timestamp,
          observed_at=EXCLUDED.observed_at,
+         enumeration_cursor=EXCLUDED.enumeration_cursor,
          holdings=EXCLUDED.holdings,
          coverage=EXCLUDED.coverage
        WHERE EXCLUDED.block_number >= balance_snapshots.block_number
        RETURNING 1`,
       [row.chainId, row.address.toLowerCase(), row.blockNumber, row.blockHash,
-        row.blockTimestamp, row.observedAt, JSON.stringify(row.holdings), JSON.stringify(row.coverage)],
+        row.blockTimestamp, row.observedAt, row.enumerationCursor ?? null,
+        JSON.stringify(row.holdings), JSON.stringify(row.coverage)],
     );
     return result.rowCount === 1;
   }
@@ -113,6 +119,9 @@ function fromDatabaseRow(row: DatabaseRow): BalanceSnapshotRow {
     observedAt: timestamp(row.observed_at),
     staleAt: row.stale_at === null ? null : timestamp(row.stale_at),
     hotUntil: row.hot_until === null ? null : timestamp(row.hot_until),
+    enumerationCursor: row.enumeration_cursor === null
+      ? null
+      : String(row.enumeration_cursor),
     holdings: parseJson<ReadHolding[]>(row.holdings),
     coverage: parseJson<BalancesCoverage>(row.coverage),
   };

@@ -28,6 +28,19 @@ export function balanceSnapshotStoreContract(options: {
       });
     });
 
+    test("enumeration cursor round-trips and a completed scan clears it", async () => {
+      await store.putObservation({
+        ...observation("10", "2026-09-13T12:00:10.000Z"),
+        enumerationCursor: "page-two",
+      });
+      expect((await store.get(8453, ADDRESS))?.enumerationCursor).toBe("page-two");
+      await store.putObservation({
+        ...observation("10", "2026-09-13T12:00:11.000Z"),
+        enumerationCursor: null,
+      });
+      expect((await store.get(8453, ADDRESS))?.enumerationCursor).toBeNull();
+    });
+
     test("equal-block observations may replace enrichment without clearing signals", async () => {
       await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
       await store.markStale(8453, ADDRESS, new Date("2026-09-13T12:00:11.000Z"));
@@ -92,6 +105,7 @@ function observation(blockNumber: string, observedAt: string): BalanceObservatio
     blockHash: `0x${blockNumber.padStart(64, "0")}`,
     blockTimestamp: blockNumber,
     observedAt,
+    enumerationCursor: null,
     holdings: [],
     coverage: { registry: "complete", catalog: "complete" },
   };
