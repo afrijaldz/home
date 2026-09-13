@@ -250,6 +250,15 @@ describe("balance presentation", () => {
     });
   });
 
+  test("prioritizes the country prompt over stale observation age", () => {
+    const snapshot = buildBalancesSnapshotFixture({ region: "GLOBAL" });
+
+    expect(presentBalances(
+      { status: "ready", snapshot: { ...snapshot, stale: true }, error: null },
+      { showSmallBalances: false, nowMs: NOW },
+    ).statusLabel).toBe("Choose a country in Account to set how money is shown");
+  });
+
   test("labels only stale snapshots with their observation age", () => {
     const snapshot = buildBalancesSnapshotFixture({
       fetchedAt: "2026-09-13T12:00:00.000Z",

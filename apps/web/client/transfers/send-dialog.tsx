@@ -1,5 +1,6 @@
 "use client";
 
+import { type SendAvailability } from "@/client/home/send-availability";
 import { MoneyTicker } from "@/components/money-ticker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -35,13 +36,11 @@ import {
 } from "@/shared/transfers/transfer-helpers";
 import {
   TransferExecutionError,
-  type TransferAssetAvailability,
   type TransferRequest,
 } from "@/shared/transfers/types";
 import type { PreparedMoneyAction } from "@/shared/money-actions/types";
 
 type SendStep = "amount" | "address" | "confirm" | "pending" | "error";
-type SendAssetAvailability = TransferAssetAvailability & { balanceAgeLabel?: string };
 
 export function SendDialog({
   open,
@@ -61,7 +60,7 @@ export function SendDialog({
 }: {
   open: boolean;
   address: `0x${string}` | null;
-  availableAssets?: readonly SendAssetAvailability[];
+  availableAssets?: SendAvailability;
   assetMarkResolution?: AssetMarkResolution;
   prepareMoneyAction: AccountWalletClient["prepareMoneyAction"];
   resumeMoneyAction: AccountWalletClient["resumeMoneyAction"];
