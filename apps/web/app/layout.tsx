@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { brand } from "@/config/brand";
 import { CdpAccountProvider } from "@/client/account/cdp-client";
 import { normalizeProjectId } from "@/client/account/session-client";
-import { isBaseAccountEnabled } from "@/shared/account/session-types";
 import { isHomeSessionConfigured } from "@/server/auth/native-base-session";
 import { HomeQueryClientProvider } from "@/client/query/query-client";
 import "./globals.css";
@@ -16,12 +15,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   const accountProvider = (
     <CdpAccountProvider
       projectId={normalizeProjectId(process.env.NEXT_PUBLIC_CDP_PROJECT_ID)}
-      baseAccountEnabled={isBaseAccountEnabled(
-        process.env.NEXT_PUBLIC_ENABLE_BASE_ACCOUNT,
-      )}
-      nativeBaseAccountEnabled={isHomeSessionConfigured(
-        process.env.HOME_SESSION_SECRET,
-      )}
+      baseAccountEnabled={isHomeSessionConfigured(process.env.HOME_SESSION_SECRET)}
       smokeFixture={process.env.HOME_PLAYWRIGHT_SMOKE === "1" && !process.env.VERCEL}
     >
       {children}

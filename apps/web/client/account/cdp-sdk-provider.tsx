@@ -11,10 +11,8 @@ import {
   useIsInitialized,
   useIsSignedIn,
   useSignInWithEmail,
-  useSignInWithSiwe,
   useSignOut,
   useVerifyEmailOTP,
-  useVerifySiweSignature,
 } from "@coinbase/cdp-hooks";
 import { Component, useMemo, type ReactNode } from "react";
 import {
@@ -29,7 +27,7 @@ const providerUnavailableClient = createBlockedAccountWalletClient(
   "provider-unavailable",
 );
 
-class CdpHooksErrorBoundary extends Component<
+export class CdpHooksErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
   { failed: boolean }
 > {
@@ -44,20 +42,14 @@ class CdpHooksErrorBoundary extends Component<
   }
 }
 
-function AccountWalletBridge({
-  children,
-  baseAccountEnabled,
-}: {
-  children: ReactNode;
-  baseAccountEnabled: boolean;
-}) {
+export type CdpSdkBoundary = AccountWalletSdkBoundary & { isInitialized: boolean };
+
+export function useCdpSdkBoundary(): CdpSdkBoundary {
   const { isInitialized } = useIsInitialized();
   const { isSignedIn } = useIsSignedIn();
   const { currentUser } = useCurrentUser();
   const { signInWithEmail } = useSignInWithEmail();
   const { verifyEmailOTP } = useVerifyEmailOTP();
-  const { signInWithSiwe } = useSignInWithSiwe();
-  const { verifySiweSignature } = useVerifySiweSignature();
   const { getAccessToken } = useGetAccessToken();
   const { signOut } = useSignOut();
   const currentUserId = currentUser?.userId ?? null;
@@ -67,8 +59,10 @@ function AccountWalletBridge({
     /^0x[0-9a-fA-F]{40}$/.test(sdkSmartAccountAddress)
     ? sdkSmartAccountAddress as `0x${string}`
     : null;
-  const sdk = useMemo<AccountWalletSdkBoundary>(
+
+  return useMemo<CdpSdkBoundary>(
     () => ({
+      authentication: "cdp",
       isInitialized,
       isSignedIn,
       ownerKey: currentUserId,
@@ -83,9 +77,11 @@ function AccountWalletBridge({
       verifyEmailOTP: async (flowId, otp) => {
         await verifyEmailOTP({ flowId, otp });
       },
-      signInWithSiwe: async (options) => signInWithSiwe(options),
-      verifySiweSignature: async (flowId, signature) => {
-        await verifySiweSignature({ flowId, signature });
+      signInWithSiwe: async () => {
+        throw new Error("Base Account uses the Home-native flow.");
+      },
+      verifySiweSignature: async () => {
+        throw new Error("Base Account uses the Home-native flow.");
       },
       getAccessToken,
       sendUserOperation,
@@ -99,18 +95,34 @@ function AccountWalletBridge({
       isInitialized,
       isSignedIn,
       signInWithEmail,
-      signInWithSiwe,
       signOut,
       verifyEmailOTP,
-      verifySiweSignature,
     ],
   );
+}
+
+function AccountWalletBridge({
+  children,
+  baseAccountEnabled,
+}: {
+  children: ReactNode;
+  baseAccountEnabled: boolean;
+}) {
+  const sdk = useCdpSdkBoundary();
 
   return (
     <AccountWalletSessionOwner sdk={sdk} baseAccountEnabled={baseAccountEnabled}>
       {children}
     </AccountWalletSessionOwner>
   );
+}
+
+export function cdpHooksConfig(projectId: string) {
+  return {
+    projectId,
+    ethereum: { createOnLogin: "smart" as const },
+    disableAnalytics: true,
+  };
 }
 
 export default function CdpSdkProvider({
@@ -122,11 +134,7 @@ export default function CdpSdkProvider({
   baseAccountEnabled: boolean;
   children: ReactNode;
 }) {
-  const config = useMemo(() => ({
-    projectId,
-    ethereum: { createOnLogin: "smart" as const },
-    disableAnalytics: true,
-  }), [projectId]);
+  const config = useMemo(() => cdpHooksConfig(projectId), [projectId]);
 
   return (
     <CdpHooksErrorBoundary

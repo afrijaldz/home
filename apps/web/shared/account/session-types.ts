@@ -14,9 +14,3 @@ export type VerifiedAccountSession = {
   } | null;
   accountProvider: AccountProvider;
 };
-
-export function isBaseAccountEnabled(
-  publicFlag: string | undefined,
-): boolean {
-  return publicFlag === "1";
-}

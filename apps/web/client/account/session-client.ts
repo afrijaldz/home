@@ -12,6 +12,7 @@ export type { VerifiedAccountSession } from "@/shared/account/session-types";
 
 export type SessionValidationFailure =
   | "unauthenticated"
+  | "provider-disabled"
   | "unavailable"
   | "invalid-response"
   | "address-mismatch";
@@ -109,6 +110,15 @@ export async function validateAccountSession(
 
   if (response.status === 401) {
     throw new SessionValidationError("unauthenticated");
+  }
+
+  if (response.status === 403) {
+    const failure = await response.json().catch(() => null) as {
+      error?: { code?: unknown };
+    } | null;
+    if (failure?.error?.code === "BASE_ACCOUNT_DISABLED") {
+      throw new SessionValidationError("provider-disabled");
+    }
   }
 
   if (!response.ok) {

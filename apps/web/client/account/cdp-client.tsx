@@ -147,6 +147,7 @@ export type AccountWalletSdkBoundary = {
 
 const unconfiguredClient = createBlockedAccountWalletClient("unconfigured");
 const LazyCdpSdkProvider = lazy(() => import("./cdp-sdk-provider"));
+const LazyCompositeAccountProvider = lazy(() => import("./composite-account-provider"));
 const LazyNativeBaseAccountBridge = lazy(() => import("./native-base-bridge"));
 const LazySmokeFixtureAccountProvider = lazy(() =>
   import("./smoke-fixture-provider").then((module) => ({
@@ -204,10 +205,12 @@ export function scheduleSdkActivation(
 function LazyConfiguredAccountProvider({
   projectId,
   baseAccountEnabled,
+  provider,
   children,
 }: {
   projectId: string;
   baseAccountEnabled: boolean;
+  provider: "cdp" | "composite";
   children: ReactNode;
 }) {
   const [active, setActive] = useState(false);
@@ -263,14 +266,28 @@ function LazyConfiguredAccountProvider({
     return <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>;
   }
 
+  const providerChildren = (
+    <>
+      <AccountClientCapture onClient={onClient} />
+      {children}
+    </>
+  );
+
   return (
     <Suspense fallback={(
       <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>
     )}>
-      <LazyCdpSdkProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
-        <AccountClientCapture onClient={onClient} />
-        {children}
-      </LazyCdpSdkProvider>
+      {provider === "composite"
+        ? (
+            <LazyCompositeAccountProvider projectId={projectId}>
+              {providerChildren}
+            </LazyCompositeAccountProvider>
+          )
+        : (
+            <LazyCdpSdkProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
+              {providerChildren}
+            </LazyCdpSdkProvider>
+          )}
     </Suspense>
   );
 }
@@ -278,13 +295,11 @@ function LazyConfiguredAccountProvider({
 export function CdpAccountProvider({
   projectId,
   baseAccountEnabled = false,
-  nativeBaseAccountEnabled = false,
   smokeFixture = false,
   children,
 }: {
   projectId: string | null;
   baseAccountEnabled?: boolean;
-  nativeBaseAccountEnabled?: boolean;
   smokeFixture?: boolean;
   children: ReactNode;
 }) {
@@ -297,14 +312,29 @@ export function CdpAccountProvider({
       </Suspense>
     );
   }
-  if (projectId) {
+  if (projectId && baseAccountEnabled) {
     return (
-      <LazyConfiguredAccountProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
+      <LazyConfiguredAccountProvider
+        projectId={projectId}
+        baseAccountEnabled
+        provider="composite"
+      >
         {children}
       </LazyConfiguredAccountProvider>
     );
   }
-  if (nativeBaseAccountEnabled) {
+  if (projectId) {
+    return (
+      <LazyConfiguredAccountProvider
+        projectId={projectId}
+        baseAccountEnabled={false}
+        provider="cdp"
+      >
+        {children}
+      </LazyConfiguredAccountProvider>
+    );
+  }
+  if (baseAccountEnabled) {
     return (
       <Suspense fallback={(
         <AccountWalletClientProvider client={unconfiguredClient}>{children}</AccountWalletClientProvider>

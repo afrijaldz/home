@@ -1,91 +1,59 @@
 # Base Account sign-in
 
-Status: two mechanisms as of #308 (issue #288, Jesse-locked September 11, 2026). Which one runs depends on whether a CDP project is configured. Real Base Account signature compatibility has still not been proven by a user smoke test on either.
+Status: one Home-native mechanism as of #392 (issue #288, Jesse-locked September 11, 2026). Real Base Account signature compatibility still requires a manual user smoke with the intended wallet.
 
-Home can show **Continue with email** and **Continue with Base Account** together in the existing sign-in sheet. Email always authenticates through CDP. Base Account takes one of two routes, and the selector is the CDP project ID rather than a dedicated switch.
+Home can show **Continue with email** and **Continue with Base Account** together in the existing sign-in sheet. Email authenticates through CDP when `NEXT_PUBLIC_CDP_PROJECT_ID` is configured. Base Account always uses Home-native SIWE, regardless of CDP configuration, and is available only when `HOME_SESSION_SECRET` is configured with at least 32 characters.
 
-| `NEXT_PUBLIC_CDP_PROJECT_ID` | Base Account route | Gate |
-| --- | --- | --- |
-| set | CDP SIWE hop, as before | `NEXT_PUBLIC_ENABLE_BASE_ACCOUNT=1` |
-| unset | Home-native, verified by Home against Base | `HOME_SESSION_SECRET`, at least 32 characters |
+## Security boundary
 
-`app/layout.tsx` builds the CDP config from the project ID; when there is none it mounts `NativeBaseAccountBridge` instead, which enables Base Account on the strength of the session secret alone. The email button is then hidden, because there is no project to authenticate against. Both routes converge on the same server-validated Home session shape, so everything downstream of sign-in is unchanged.
+The Home-native Base Account flow:
 
-#288 locked "replaces the CDP SIWE hop app-wide". What shipped in #308 replaces it for clones with no CDP project; `client/account/cdp-session-lifecycle.tsx` still calls `signInWithSiwe` and `verifySiweSignature` when one is configured. Both are documented below because both are reachable today.
+1. connects through `@base-org/account` on Base mainnet (`8453`);
+2. requests `POST /api/auth/base/nonce`, which builds an EIP-4361 message for the connected address, current request domain and origin, a fresh nonce, and a five-minute expiry;
+3. returns the message with a signed, HttpOnly `home-auth-challenge` cookie carrying the address, origin, message hash, nonce, issue time, and expiry;
+4. signs the exact message with `personal_sign` and submits it to `POST /api/auth/base/verify`;
+5. re-reads the challenge cookie, requires every message field to match, and verifies the signature with viem against Base; and
+6. on success, issues an HMAC-signed `home-session` cookie that is `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS, and valid for seven days.
 
-## Security boundary: CDP SIWE route
+The session subject derives from the verified, lowercased address. The browser's connected address is never accepted as session authority. Verification resolves smart-account signatures through ERC-1271 and ERC-6492 in viem and fails closed if the signature cannot be verified. Home creates no authentication database row; the signed challenge is the only nonce state.
 
-Reached when `NEXT_PUBLIC_CDP_PROJECT_ID` is set. This route does not create a Home nonce or verifier. It:
+A Bearer-validated CDP profile can create only a `cdp-embedded` email session. Requests whose explicit or restored CDP profile resolves to `base-account` receive `403 BASE_ACCOUNT_DISABLED`; Home never derives a Base Account session from a CDP token.
 
-1. connects through `@base-org/account` `2.5.10`, configured for Base mainnet (`8453`), manual subaccount creation, and the universal account as the default;
-2. requests a CDP SIWE challenge with the connected address, chain `8453`, current host, and current origin;
-3. UTF-8 hex-encodes and signs the exact `message` returned by CDP using `personal_sign`;
-4. sends only CDP's unchanged `flowId` and the provider's unchanged hex signature to `verifySiweSignature`;
-5. validates the resulting CDP access token on the server; and
-6. selects the address only from the validated CDP profile's `authenticationMethods` entry with `type: "siwe"`.
+Account or chain changes during connection, signing, or verification invalidate the connector and hide the session. `POST /api/auth/base/logout` requires a same-origin request and clears `home-session`, `home-auth-challenge`, `home-cdp-session`, and `home-cdp-live`.
 
-## Security boundary: Home-native route
+## CDP render hint
 
-Reached when no CDP project ID is set. Home issues and verifies its own challenge, and touches no CDP service. It:
-
-1. connects through the same `@base-org/account` connector on Base mainnet (`8453`);
-2. requests a challenge from `POST /api/auth/base/nonce`, which builds an EIP-4361 message with the connected address, chain `8453`, the request host as `domain`, the request origin as `uri`, a fresh 16-byte nonce, and a five-minute expiry; it returns the message alongside a signed, HttpOnly `home-auth-challenge` cookie carrying the address, origin, message hash, nonce, issue time, and expiry. That cookie is the only challenge state;
-3. signs that exact message with `personal_sign`;
-4. posts the message and signature to `POST /api/auth/base/verify`;
-5. on the server, re-reads and verifies the signed challenge cookie, requires the submitted message hash and origin to match its contents, re-parses the message and requires address, chain `8453`, `domain`, `uri`, nonce, issue time, and expiry to match, then verifies the signature with viem's `verifySiweMessage` against Base; `POST /api/auth/base/verify` clears the challenge cookie on every verification response; and
-6. on success issues a `home-session` cookie, HMAC-signed with `HOME_SESSION_SECRET`, `HttpOnly`, `SameSite=Lax`, `Secure` over https, lasting seven days. The session subject derives from the verified lowercased address, never from anything the client sent.
-
-`POST /api/auth/base/logout` accepts same-origin posts only and clears both cookies.
-
-The signed `home-auth-challenge` cookie is the only Home-native challenge state. It is verified and cleared by `POST /api/auth/base/verify`, and Home creates no database row for authentication.
-
-Verification here resolves smart-account signatures through ERC-1271 and ERC-6492 in viem, which is the compatibility unknown recorded below for the CDP route. It still fails closed: a signature viem cannot verify leaves the account signed out.
-
-The browser's connected address is never accepted by the server as session authority. It is retained only in memory long enough for the client to require the server-returned SIWE address to match. Home does not persist that raw connector address. Base mode also refuses missing, malformed, or multiple distinct SIWE addresses instead of falling back to a CDP embedded account.
-
-Account or chain changes during connection, signing, or verification invalidate the connector and hide the session. Logout and CDP owner changes clear both the selected connector and visible private session details. The SDK is not used to create a Base subaccount, request transactions, export keys or tokens, grant spend permissions, or approve calldata.
-
-## Important compatibility limitation (CDP route only)
-
-This section describes the CDP SIWE route. The Home-native route does not depend on CDP's signature support.
-
-CDP's installed SIWE API describes the submitted signature as an ERC-191 hex signature and says verification is hosted/on-chain, but the available CDP documentation does not explicitly confirm ERC-1271 or ERC-6492 support for Base Account smart-wallet signatures on chain `8453`. The implementation therefore fails closed if `verifySiweSignature` rejects the signature and tells the user that the account remains signed out. Do not claim successful Base Account compatibility until the real smoke below passes with the intended funded account.
-
-CDP's validated SIWE authentication profile contains an address but no chain ID. The signed challenge binds chain `8453`, and the connector checks Base before and after signing, but Home cannot recover authoritative chain provenance from the later profile alone. The returned `accountProvider: "base-account"` value records which verified profile field Home selected; it is presentation/connector provenance, not new authorization, account linking, funding proof, deployment proof, or transaction readiness.
-
-On the CDP route, an initial Base sign-in may create a separate CDP user from an existing email login. The Home-native route creates no CDP user at all. This flow does not silently merge identities. Linking an email-authenticated CDP user to a Base Account would require a separate explicit user-authorized linking feature.
+A successful Bearer-validated email session with a Base smart account also receives a 24-hour render-hint pair signed by `HOME_SESSION_SECRET`: HttpOnly `home-cdp-session` contains the validated session and a nonce, while readable `home-cdp-live` contains the same nonce. Both halves must be present and valid. The hint has no API authority; private API routes still require a fresh CDP access token. Server Components read a valid Home session first and then the hint, so a signed-in visit to `/` redirects before rendering to `/dashboard` while `/?account=signin` remains a loop-breaking sign-in destination.
 
 ## Operator setup
 
-1. Complete an independent security review of the connector, SIWE verification, and server account-selection diff before enabling the flag for a real wallet test or deployment.
-2. In the same CDP project used by Home, configure the exact local or deployed web origin as an allowed origin and enable SIWE authentication if the project's authentication settings require explicit method enablement. Hosted smoke uses the forever-allowlisted staging/prod host by default; add a Vercel preview origin only when that PR must demo Base Account there. Same origin must appear on Embedded Wallet CORS **and** SIWE / Clients — Onramp wildcards do not count. See [CDP preview auth](cdp-setup.md#preview-auth) and [#67](https://github.com/jessepollak/home/issues/67).
-3. Set `HOME_SESSION_SECRET` to at least 32 characters. It signs the challenge and session cookies on the Home-native route. `normalizeSecret` returns null below 32 bytes, so a short value disables that route with no error rather than weakening it. Server-only; never expose it with a `NEXT_PUBLIC_` prefix.
-4. For the CDP route, keep the existing `NEXT_PUBLIC_CDP_PROJECT_ID`, `CDP_API_KEY_ID`, and `CDP_API_KEY_SECRET` configuration from `docs/cdp-setup.md`, and set `NEXT_PUBLIC_ENABLE_BASE_ACCOUNT=1`. For a local test, add it to the existing gitignored `apps/web/.env.local`; do not overwrite that file or record its values.
-5. For the Home-native route, leave `NEXT_PUBLIC_CDP_PROJECT_ID` unset. Step 2 does not apply: there is no CDP origin allowlist in that path.
-6. The Home-native route does not require `DATABASE_URL`: its signed `home-auth-challenge` cookie is the only challenge state, so authentication creates no database row.
-7. With a CDP project configured, leave `NEXT_PUBLIC_ENABLE_BASE_ACCOUNT` unset to deploy email-only sign-in. The server rejects requests that select Base Account mode when the matching flag is off.
+1. Set `HOME_SESSION_SECRET` to at least 32 characters in every environment where Base Account sign-in or CDP render hints should work. Keep it server-only; never use a `NEXT_PUBLIC_` prefix.
+2. Configure `BASE_RPC_URL` when the deployment should use a dedicated Base mainnet RPC. Local development may use the documented public fallback.
+3. Configure `NEXT_PUBLIC_CDP_PROJECT_ID`, `CDP_API_KEY_ID`, and `CDP_API_KEY_SECRET` only for email sign-in. Base Account does not require CDP SIWE, a CDP SIWE allowlist, or a separate public feature flag.
+4. `DATABASE_URL` is not required for authentication itself because the flow is stateless.
+5. Rotating `HOME_SESSION_SECRET` signs users out of Home-native sessions and invalidates existing render hints.
 
-## Exact manual user smoke
-
-> **Written for the CDP route, not yet updated for #308.** The wallet-side steps apply to both, but the server-side expectations below (`flowId`, CDP access token) describe the CDP route only. The Home-native route needs its own procedure from the auth lane.
+## Manual user smoke
 
 No automated agent should perform this smoke because it opens a real wallet and requests a real signature.
 
-1. Start Home normally and open `/account` or the existing account sheet on the configured origin.
-2. Confirm both **Continue with email** and **Continue with Base Account** are present. Confirm email login still follows the existing OTP flow.
-3. Select **Continue with Base Account** and choose the user's existing funded main Base Account. Do not create or choose a new subaccount.
-4. Confirm the wallet is on Base mainnet (`8453`). Cancel once and verify Home remains signed out with private details hidden.
-5. Retry. Review the SIWE prompt before signing: the address must be the selected account, the chain must be `8453`, and the domain/URI must match the current Home origin. The nonce and expiry must be CDP-generated. Do not copy the message, signature, OTP, access token, or credentials into logs or shell history.
-6. Complete `personal_sign`. If CDP rejects the smart-wallet signature, record only the sanitized Home error and stop: ERC-1271/ERC-6492 compatibility remains unverified and no fallback is permitted.
-7. If verification succeeds, inspect the same-origin `/api/session` response in browser developer tools. It must contain `accountProvider: "base-account"` and the selected funded address, not an address from `evmSmartAccountObjects`. The UI must show that same address only after the response succeeds.
-8. Inspect the subsequent same-origin `/api/balances?region=…` request for the selected presentation region. It must carry `X-Home-Account-Provider: base-account`, and `owner.address` in the response must be the same server-verified SIWE address. Confirm the Home hero is labeled **Total balance** and shows the holdings total in the region's presentation currency; cash rows use their own denomination, priced assets show their fiat value plus token quantity, and unpriced assets show token quantity only. Home must not describe the total as net worth.
-9. During a second run, change the wallet account or chain while signing/verifying. Home must block the flow, clear the connector, and keep private details hidden.
-10. Sign out and confirm the address and balances disappear immediately. Repeat after a reload and after switching CDP users to ensure no stale Base address or prior wallet amount is displayed.
-11. Repeat the smoke on the forever-allowlisted staging/prod host before enabling the flag for users. Repeat on a preview only after that origin is on CORS and SIWE / Clients. A successful authentication or balance-read smoke does not authorize transactions or spending delegation.
+1. Start Home on the intended origin and open `/?account=signin`.
+2. Confirm email is available when CDP is configured and **Continue with Base Account** is available when `HOME_SESSION_SECRET` is configured.
+3. Select the intended Base Account on Base mainnet (`8453`). Cancel once and verify Home remains signed out.
+4. Retry and inspect the SIWE prompt: address, chain, domain, URI, nonce, and expiry must match the selected account and current Home origin.
+5. Complete `personal_sign`. If verification fails, record only the sanitized Home error and stop; do not add a weaker fallback.
+6. Confirm `/api/session` returns `accountProvider: "base-account"` and the selected address using the `home-session` cookie, with no Authorization header.
+7. Confirm subsequent private API requests carry `X-Home-Account-Provider: base-account` and scope data to that verified address.
+8. Reload `/` and confirm the server redirects to `/dashboard`. Open `/?account=signin` and confirm it still renders the sign-in sheet.
+9. Change account or chain during a second attempt and confirm the flow fails closed.
+10. Sign out and confirm private details disappear, all four Home cookies are cleared, and reloading remains signed out.
+
+## History
+
+Before #392, a configured CDP project selected a separate CDP SIWE hop while clones without a project used Home-native SIWE. That split implementation and the retired `NEXT_PUBLIC_ENABLE_BASE_ACCOUNT` flag are historical only; Base Account now always uses the Home-native route described above.
 
 ## References
 
-- CDP SIWE authentication: https://docs.cdp.coinbase.com/embedded-wallets/authentication/siwe
+- CDP email authentication: https://docs.cdp.coinbase.com/embedded-wallets/authentication/email
 - Base Account `personal_sign`: https://docs.base.org/base-account/reference/core/provider-rpc-methods/personal_sign
-- Base Account `wallet_connect`: https://docs.base.org/base-account/reference/core/provider-rpc-methods/wallet_connect
 - Base Account signature verification guide: https://docs.base.org/base-account/guides/verify-signatures
