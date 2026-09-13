@@ -1,110 +1,104 @@
 import { describe, expect, test } from "bun:test";
 import {
-  CDP_WEBHOOK_SUBSCRIPTIONS_PATH,
-  createCdpActivitySubscription,
-  createCdpWebhookSubscriptions,
-} from "./webhook-subscriptions";
+  MemoryWebhookSubscriptionStore,
+  type WebhookSubscriptionStore,
+} from "./webhook-subscription-store";
+import { CDP_WEBHOOK_SUBSCRIPTIONS_PATH, createCdpWebhookSubscriptions, deploymentWebhookOrigin } from "./webhook-subscriptions";
 
 const ADDRESS = "0x1111111111111111111111111111111111111111" as const;
 const OTHER = "0x2222222222222222222222222222222222222222" as const;
-const env = { CDP_API_KEY_ID: "key", CDP_API_KEY_SECRET: "secret" };
+const env = { CDP_API_KEY_ID: "key", CDP_API_KEY_SECRET: "api-value", HOME_WEBHOOK_ORIGIN: "https://home.example" };
 const jwt = async () => "fixture.jwt";
+
+function persistentStore(): WebhookSubscriptionStore {
+  const memory = new MemoryWebhookSubscriptionStore();
+  return {
+    persistent: true,
+    insert: (record) => memory.insert(record),
+    list: () => memory.list(),
+  };
+}
 
 function subscription(addresses: string[] = [OTHER]) {
   return {
     subscriptionId: "subscription-1",
     eventTypes: ["wallet_activity"],
     target: { url: "https://home.example/api/webhooks/cdp" },
-    labels: {
-      network: "base-mainnet",
-      wallet_addresses: addresses.join(","),
-    },
+    labels: { network: "base-mainnet", wallet_addresses: addresses.join(",") },
     isEnabled: true,
   };
 }
 
 describe("CDP balance webhook subscriptions", () => {
-  test("lists once, then PUTs a missing address into a subscription with room", async () => {
-    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  test("re-lists before PUT and confirms the address after a successful update", async () => {
+    const requests: string[] = [];
+    let updated = false;
     const manager = createCdpWebhookSubscriptions({
       env,
-      generateJwtImpl: jwt as never,
-      fetchImpl: async (input, init) => {
-        requests.push({
-          url: String(input),
-          method: init?.method ?? "GET",
-          body: init?.body ? JSON.parse(String(init.body)) : null,
-        });
-        return Response.json(init?.method === "PUT" ? subscription([OTHER, ADDRESS]) : {
-          subscriptions: [subscription()],
-        });
-      },
-      now: () => 1_000,
-    });
-    await manager.ensureAddressSubscribed(ADDRESS);
-    await manager.ensureAddressSubscribed(ADDRESS);
-    expect(requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
-    expect(requests[1]?.url).toEndWith(`${CDP_WEBHOOK_SUBSCRIPTIONS_PATH}/subscription-1`);
-    expect(requests[1]?.body).toEqual({
-      eventTypes: ["wallet_activity"],
-      target: { url: "https://home.example/api/webhooks/cdp" },
-      labels: { network: "base-mainnet", wallet_addresses: `${OTHER},${ADDRESS}` },
-      isEnabled: true,
-    });
-  });
-
-  test("accepts a legacy snake_case list fixture and skips an existing address", async () => {
-    let calls = 0;
-    const manager = createCdpWebhookSubscriptions({
-      env,
-      generateJwtImpl: jwt as never,
-      fetchImpl: async () => {
-        calls += 1;
-        return Response.json({ subscriptions: [{
-          id: "legacy",
-          event_type: "wallet.activity.multi",
-          event_filters: [{ network: "base-mainnet", addresses: [ADDRESS] }],
-          notification_uri: "https://home.example/api/webhooks/cdp",
-        }] });
-      },
-    });
-    await manager.ensureAddressSubscribed(ADDRESS);
-    expect(calls).toBe(1);
-  });
-
-  test("a full or missing subscription is non-fatal and emits one failure", async () => {
-    const failures: string[] = [];
-    const full = Array.from({ length: 100 }, (_, index) =>
-      `0x${(index + 10).toString(16).padStart(40, "0")}`
-    );
-    const manager = createCdpWebhookSubscriptions({
-      env,
-      generateJwtImpl: jwt as never,
-      fetchImpl: async () => Response.json({ subscriptions: [subscription(full)] }),
-      logFailure: (reason) => failures.push(reason),
-    });
-    await expect(manager.ensureAddressSubscribed(ADDRESS)).resolves.toBeUndefined();
-    expect(failures).toEqual(["no-subscription-with-room"]);
-  });
-
-  test("operator creation targets Home and returns the one-time secret", async () => {
-    let requestBody: unknown;
-    const created = await createCdpActivitySubscription({
-      origin: "https://home.example",
-      addresses: [ADDRESS],
-      env,
+      store: persistentStore(),
       generateJwtImpl: jwt as never,
       fetchImpl: async (_input, init) => {
-        requestBody = JSON.parse(String(init?.body));
-        return Response.json({ subscriptionId: "new-subscription", metadata: { secret: "hook-secret" } });
+        const method = init?.method ?? "GET";
+        requests.push(method);
+        if (method === "PUT") updated = true;
+        return Response.json({ subscriptions: [subscription(updated ? [OTHER, ADDRESS] : [OTHER])] });
       },
     });
-    expect(created).toEqual({ id: "new-subscription", secret: "hook-secret" });
-    expect(requestBody).toEqual({
+    await manager.ensureAddressSubscribed(ADDRESS);
+    expect(requests).toEqual(["GET", "GET", "PUT", "GET"]);
+  });
+
+  test("creates a subscription and persists its one-time signing SECRET when no candidate has room", async () => {
+    const store = persistentStore();
+    const requests: Array<{ method: string; body: unknown }> = [];
+    const manager = createCdpWebhookSubscriptions({
+      env,
+      store,
+      generateJwtImpl: jwt as never,
+      fetchImpl: async (_input, init) => {
+        const method = init?.method ?? "GET";
+        requests.push({ method, body: init?.body ? JSON.parse(String(init.body)) : null });
+        return method === "POST"
+          ? Response.json({ subscriptionId: "new-subscription", secret: "one-time-value" })
+          : Response.json({ subscriptions: [] });
+      },
+    });
+    await manager.ensureAddressSubscribed(ADDRESS);
+    expect(requests.map(({ method }) => method)).toEqual(["GET", "POST"]);
+    expect(requests[1]?.body).toEqual({
       eventTypes: ["wallet_activity"],
       target: { url: "https://home.example/api/webhooks/cdp" },
       labels: { network: "base-mainnet", wallet_addresses: ADDRESS },
       isEnabled: true,
     });
+    expect(await store.list()).toEqual([expect.objectContaining({
+      subscriptionId: "new-subscription",
+      secret: "one-time-value",
+    })]);
+  });
+
+  test("registration is disabled once per instance without persistent storage", async () => {
+    const failures: string[] = [];
+    let calls = 0;
+    const manager = createCdpWebhookSubscriptions({
+      env,
+      store: new MemoryWebhookSubscriptionStore(),
+      fetchImpl: async () => { calls += 1; return Response.json({}); },
+      logFailure: (reason) => failures.push(reason),
+    });
+    await manager.ensureAddressSubscribed(ADDRESS);
+    await manager.ensureAddressSubscribed(OTHER);
+    expect(calls).toBe(0);
+    expect(failures).toEqual(["subscription-persistence-unavailable"]);
+  });
+
+  test("enables production or an explicit origin only", () => {
+    expect(deploymentWebhookOrigin({ VERCEL_ENV: "preview", VERCEL_PROJECT_PRODUCTION_URL: "home.example" })).toBeNull();
+    expect(deploymentWebhookOrigin({ VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "home.example" })).toBe("https://home.example");
+    expect(deploymentWebhookOrigin({ HOME_WEBHOOK_ORIGIN: "https://preview.example" })).toBe("https://preview.example");
+  });
+
+  test("uses the CDP subscription endpoint", () => {
+    expect(CDP_WEBHOOK_SUBSCRIPTIONS_PATH).toBe("/platform/v2/data/webhooks/subscriptions");
   });
 });

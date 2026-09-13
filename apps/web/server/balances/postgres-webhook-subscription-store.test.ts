@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { SqlExecutor } from "@/server/db/sql";
-import { PostgresBalanceSnapshotStore } from "./snapshot-store";
-import { balanceSnapshotStoreContract } from "./snapshot-store.contract";
+import { PostgresWebhookSubscriptionStore } from "./webhook-subscription-store";
+import { webhookSubscriptionStoreContract } from "./webhook-subscription-store.contract";
 
 const connectionString = process.env.BALANCES_PG_TEST_URL?.trim();
 const describePostgres = connectionString ? describe : describe.skip;
@@ -15,26 +15,23 @@ type BunSqlClient = {
 let client: BunSqlClient;
 let executor: SqlExecutor;
 
-describePostgres("PostgresBalanceSnapshotStore production contract", () => {
+describePostgres("Postgres webhook subscription production contract", () => {
   beforeAll(async () => {
     client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
-    const migration = await readFile(
-      resolve(import.meta.dir, "../db/migrations/003_balances.sql"),
-      "utf8",
-    );
-    await client.unsafe("DROP TABLE IF EXISTS balance_snapshots");
+    const migration = await readFile(resolve(import.meta.dir, "../db/migrations/003_balances.sql"), "utf8");
+    await client.unsafe("DROP TABLE IF EXISTS webhook_subscriptions");
     await client.unsafe(migration);
     executor = bunExecutor(client);
   });
   afterAll(async () => {
-    await client?.unsafe("DROP TABLE IF EXISTS balance_snapshots");
+    await client?.unsafe("DROP TABLE IF EXISTS webhook_subscriptions");
     await client?.close();
   });
 
-  balanceSnapshotStoreContract({
+  webhookSubscriptionStoreContract({
     name: "Postgres",
-    createStore: () => new PostgresBalanceSnapshotStore(executor),
-    reset: async () => { await client.unsafe("TRUNCATE balance_snapshots"); },
+    createStore: () => new PostgresWebhookSubscriptionStore(executor),
+    reset: async () => { await client.unsafe("TRUNCATE webhook_subscriptions"); },
   });
 });
 

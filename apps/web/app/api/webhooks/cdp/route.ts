@@ -1,5 +1,6 @@
 import { createCdpWebhookHandler } from "@/server/balances/webhook";
 import { getBalanceSnapshotStore } from "@/server/balances/snapshot-store";
+import { getWebhookSubscriptionStore } from "@/server/balances/webhook-subscription-store";
 import { readBoundedWebhookBody } from "@/server/funding/core/webhook-body";
 import { emitServerEvent } from "@/server/observability/log";
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const handleWebhook = createCdpWebhookHandler({
   store: getBalanceSnapshotStore(),
+  subscriptions: getWebhookSubscriptionStore(),
 });
 
 export async function POST(request: Request): Promise<Response> {
