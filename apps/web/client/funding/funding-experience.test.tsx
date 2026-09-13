@@ -237,6 +237,8 @@ describe("FundingExperience", () => {
     await page().findByRole("heading", { name: "Review quote" });
     fireEvent.click(page().getByRole("button", { name: "Confirm deposit" }));
     await page().findByRole("heading", { name: "Review payment details" });
+    // The created order repriced ($25 quoted, $25.50 charged); the review shows the real total.
+    expect(page().getByText("You pay").parentElement?.textContent).toContain("$25.50");
     expect(Boolean(page().queryByTitle("Apple Pay")), "iframe before economics confirmation").toBe(false);
     expect(navigations).toEqual([]);
 

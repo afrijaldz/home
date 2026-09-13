@@ -440,6 +440,13 @@ function ProviderEconomicsReview({
     binding.assetSymbol,
     { regionId, useNoBreakSpace: true },
   );
+  // The provider may reprice between quote and order; the created order's
+  // instruction carries the fiat total the user will actually pay.
+  const instruction = order.instructions;
+  const pay =
+    instruction && instruction.kind !== "redirect"
+      ? formatFiatAmount(instruction.amount, instruction.currency)
+      : null;
   return (
     <>
       <MoneyModalBody className="gap-4 pt-4">
@@ -451,6 +458,7 @@ function ProviderEconomicsReview({
           </CardHeader>
           <CardContent>
             <dl className="space-y-3">
+              {pay ? <DefinitionRow label="You pay" value={pay} /> : null}
               <DefinitionRow label="Receive" value={receive} />
               {fees.length ? (
                 fees.map((fee, index) => (
