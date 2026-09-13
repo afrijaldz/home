@@ -57,7 +57,11 @@ export class FundingCore {
     }));
   }
 
-  async createQuote(session: VerifiedAccountSession, body: unknown) {
+  async createQuote(
+    session: VerifiedAccountSession,
+    body: unknown,
+    returnOrigin: string,
+  ) {
     const quoteSecret = this.quoteSecret();
     if (quoteSecret.length < 32) throw new FundingCoreError("FUNDING_NOT_CONFIGURED", 424);
     const parsed = parseQuoteRequest(body);
@@ -77,9 +81,20 @@ export class FundingCore {
       if (!provider.ensureCustomer || !parsed.kycFields) throw new FundingCoreError("KYC_REQUIRED", 400);
       customerRef = (await provider.ensureCustomer({ subject: session.user.subject, fields: parsed.kycFields }, ctx)).customerRef;
     }
-    const quote = provider.createQuote
-      ? await provider.createQuote({ destination: session.smartAccount.address, fiatAmount: parsed.fiatAmount }, ctx)
-      : localOneToOneQuote(parsed.fiatAmount, asset.decimals, this.now());
+    let quote: Quote;
+    if (provider.createQuote) {
+      try {
+        quote = await provider.createQuote({
+          destination: session.smartAccount.address,
+          fiatAmount: parsed.fiatAmount,
+          returnUrl: `${returnOrigin}/fund?return=funding`,
+        }, ctx);
+      } catch {
+        throw new FundingCoreError("INVALID_PROVIDER_QUOTE", 502);
+      }
+    } else {
+      quote = localOneToOneQuote(parsed.fiatAmount, asset.decimals, this.now());
+    }
     if (quote.fiatAmount !== parsed.fiatAmount || !validAtomic(quote.tokenAmountAtomic) || Date.parse(quote.expiresAt) <= this.now().getTime()) {
       throw new FundingCoreError("INVALID_PROVIDER_QUOTE", 502);
     }
@@ -128,7 +143,14 @@ export class FundingCore {
       return publicOrder(rejected);
     }
     const asset = getFundingAsset(claims.assetId)!;
-    if (result.order.tokenAddress.toLowerCase() !== asset.address.toLowerCase() || result.order.expectedTokenAmountAtomic !== claims.quote.tokenAmountAtomic) {
+    if (
+      result.order.tokenAddress.toLowerCase() !== asset.address.toLowerCase() ||
+      result.order.expectedTokenAmountAtomic !== claims.quote.tokenAmountAtomic ||
+      !instructionUrlIsSafe(
+        result.order.instructions,
+        provider.manifest.redirectOrigins,
+      )
+    ) {
       // The create reached the provider, so a contradictory echo is an ambiguous
       // dispatch, never a safe rejection that the UI may repeat.
       return publicOrder(await this.deps.store.markDispatchAmbiguous(id, reserved.order.version, this.now().toISOString()));
@@ -235,6 +257,25 @@ function localOneToOneQuote(fiatAmount: string, decimals: number, now: Date): Qu
   }
 }
 function validAtomic(value: string) { return /^(0|[1-9][0-9]*)$/.test(value); }
+function instructionUrlIsSafe(
+  instruction: import("@/shared/funding/provider-contract").Instruction,
+  redirectOrigins: ReadonlyArray<string> | undefined,
+): boolean {
+  if (instruction.kind !== "redirect" && instruction.kind !== "embed") return true;
+  if (instruction.url.length > 4096 || !redirectOrigins?.length) return false;
+  try {
+    const url = new URL(instruction.url);
+    return (
+      url.protocol === "https:" &&
+      redirectOrigins.includes(url.origin) &&
+      !url.username &&
+      !url.password &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
 function parseQuoteRequest(value: unknown): { providerId: string; region: string; paymentMethod: string; fiatAmount: string; kycFields: Record<string, string> | null } | null {
   if (!record(value) || !["providerId", "region", "paymentMethod", "fiatAmount", "kycFields"].every((key) => !(key in value) || key === "kycFields" || typeof value[key] === "string")) return null;
   if (typeof value.providerId !== "string" || typeof value.region !== "string" || typeof value.paymentMethod !== "string" || typeof value.fiatAmount !== "string" || !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(value.fiatAmount) || value.fiatAmount.length > 64) return null;

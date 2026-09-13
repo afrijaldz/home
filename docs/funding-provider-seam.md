@@ -14,9 +14,9 @@ Everything in this document serves that. Anything that does not is deliberately 
 
 | Route | State | Problem |
 |---|---|---|
-| Coinbase Onramp (US, USDC) | Manifest provider since Sept 12 (`providers/coinbase/`), hosted redirect | Status reconciliation waits on the headless API ([#52](https://github.com/jessepollak/home/issues/52)). |
-| Ripio Ramps (AR wARS, CO wCOP) | Merged ([#253](https://github.com/jessepollak/home/pull/253)), unwired, UI is a synthetic preview | Bespoke store, reconciliation, webhook handler, UI step. |
-| IDRX (ID) | Draft [#120](https://github.com/jessepollak/home/pull/120), blocked on a funded proof | Adapter, handler, and UI candidate. |
+| Coinbase Onramp (US, USDC) | Headless Apple Pay provider on the seam (`providers/coinbase/`) | Awaiting Jesse's funded end-to-end proof and CDP production/preview domain allowlisting ([#294](https://github.com/jessepollak/home/issues/294)). |
+| Ripio Ramps (AR wARS, CO wCOP) | Adapter on the seam, unwired live | Provider-team funded validation remains. |
+| IDRX (ID) | Adapter on the seam, unwired live | Provider-team funded validation remains. |
 | MXNB, XSGD, TRYB | Blocked ([#56](https://github.com/jessepollak/home/issues/56)–[#58](https://github.com/jessepollak/home/issues/58)) | Nobody on the crew can complete a payment in those countries. |
 
 Each route rebuilt the same things. The seam builds them once.
@@ -66,7 +66,7 @@ export type ProviderContext = {
   fetch: typeof fetch;                     // origin allowlist, redirect: "manual", timeout
 };
 
-export type QuoteIntent = { destination: `0x${string}`; fiatAmount: string };
+export type QuoteIntent = { destination: `0x${string}`; fiatAmount: string; returnUrl: string };
 export type Quote = { providerQuoteId?: string; fiatAmount: string; tokenAmountAtomic: string; fees: Array<{ label: string; amount: string; currency: string }>; expiresAt: string };
 
 export type OrderIntent = {
@@ -104,6 +104,7 @@ export type ProviderOrder = {
 
 export type Instruction =
   | { kind: "redirect"; url: string }
+  | { kind: "embed"; url: string; presentation: "apple-pay"; amount: string; currency: string }
   | { kind: "bank-transfer"; rail: string; accountNumber: string; accountName?: string; bank?: string; alias?: string; reference?: string; amount: string; currency: string }
   | { kind: "qr"; scheme: "pix" | "qris" | "promptpay" | "other"; payload: string; amount: string; currency: string }
   | { kind: "payment-key"; scheme: string; key: string; amount: string; currency: string };
@@ -189,6 +190,15 @@ Cut after review to keep the first version small. Each is a follow-up if a real 
 - Lint rule for `providers/**` — convention plus review.
 - Choosing between multiple ramps in one country — all configured bindings are listed; ordering and selection UX is P2.
 - Hosted-session provider kind — Coinbase moves to the headless API instead.
+
+## Implementation notes (#294)
+
+- `Instruction` now has a distinct `embed` kind. The first presentation is `apple-pay`; the instruction carries the allowlisted iframe URL and the fee-inclusive fiat amount/currency the payer will authorize.
+- `QuoteIntent.returnUrl` gives quote-capable adapters the same request-origin context already supplied to order creation. Coinbase derives its required web `domain` from that URL without reading browser-visible environment variables.
+- After a provider reports `created`, the core validates every `redirect` and `embed` URL before persisting instructions: HTTPS, an origin declared by `manifest.redirectOrigins`, no username/password/fragment, and at most 4096 characters. Failure is `dispatch-ambiguous` because the provider request may have succeeded.
+- If a provider cannot lock a quote, the adapter requests the exact quoted token amount on create and reports the resulting fiat total on the instruction. Coinbase follows this rule by pinning USDC `purchaseAmount`; a changed USD total is reviewed in Home and authorized again in Apple Pay.
+- Coinbase's hosted redirect and `/platform/v2/onramp/sessions` path were removed. Migration `003_coinbase_hosted_retired.sql` terminalizes any remaining open `coinbase` / `hosted` rows so they no longer block or resume the US flow.
+- No environment variable was added for #294; `.env.example` is unchanged.
 
 ## Implementation notes and deviations (#301)
 

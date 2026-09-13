@@ -56,6 +56,7 @@ export type ProviderContext = {
 export type QuoteIntent = {
   destination: `0x${string}`;
   fiatAmount: string;
+  returnUrl: string;
 };
 
 export type Quote = {
@@ -106,6 +107,13 @@ export type ProviderOrder = {
 
 export type Instruction =
   | { kind: "redirect"; url: string }
+  | {
+      kind: "embed";
+      url: string;
+      presentation: "apple-pay";
+      amount: string;
+      currency: string;
+    }
   | {
       kind: "bank-transfer";
       rail: string;

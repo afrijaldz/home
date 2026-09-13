@@ -11,6 +11,7 @@ const describePostgres = connectionString ? describe : describe.skip;
 type BunSqlClient = { unsafe(text: string, values?: unknown[]): Promise<ArrayLike<unknown>>; begin<T>(run: (transaction: BunSqlClient) => Promise<T>): Promise<T>; close(): Promise<void> };
 let client: BunSqlClient;
 let store: PostgresFundingOrderStore;
+let hostedRetirementMigration: string;
 
 function reservation(intentDigest = randomUUID()): FundingReservation {
   return {
@@ -28,8 +29,10 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
   beforeAll(async () => {
     client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
     const migration = await readFile(resolve(import.meta.dir, "../migrations/002_funding_provider_seam.sql"), "utf8");
+    hostedRetirementMigration = await readFile(resolve(import.meta.dir, "../migrations/003_coinbase_hosted_retired.sql"), "utf8");
     await client.unsafe("DROP TABLE IF EXISTS funding_orders");
     await client.unsafe(migration);
+    await client.unsafe(hostedRetirementMigration);
     store = new PostgresFundingOrderStore(bunExecutor(client));
   });
   beforeEach(async () => { await client.unsafe("TRUNCATE funding_orders"); });
@@ -97,6 +100,56 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
     expect(await store.claimReceipt(first.id, { transactionHash: `0x${"3".repeat(64)}`, logIndex: 8, expectedVersion: received!.version, updatedAt: "2026-09-12T00:00:04.000Z" })).toBeNull();
     const persisted = await store.getOwned(first.id, first.owner);
     expect([persisted?.transactionHash, persisted?.logIndex]).toEqual([evidence.transactionHash, 7]);
+  });
+
+  test("migration 003 idempotently terminalizes hosted Coinbase rows and removes them from getOpen", async () => {
+    const awaiting = {
+      ...reservation(),
+      providerId: "coinbase",
+      region: "US",
+      assetId: "base:usdc",
+      paymentMethod: "hosted",
+      fiatAmount: "25",
+      quote: {
+        fiatAmount: "25",
+        tokenAmountAtomic: "25000000",
+        fees: [],
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    } satisfies FundingReservation;
+    const reserving = { ...awaiting, id: randomUUID(), intentDigest: randomUUID(), quoteToken: `signed-${randomUUID()}` };
+    await store.reserve(awaiting);
+    await store.completeDispatch(awaiting.id, {
+      providerOrderId: "hosted-session-token",
+      expectedTokenAmountAtomic: "25000000",
+      fees: [],
+      expiresAt: null,
+      instructions: { kind: "redirect", url: "https://pay.coinbase.com/buy" },
+      expectedVersion: 0,
+      updatedAt: "2026-09-12T00:00:01.000Z",
+    });
+    await store.reserve(reserving);
+
+    await client.unsafe(hostedRetirementMigration);
+    const expired = await store.getOwned(awaiting.id, awaiting.owner);
+    const failed = await store.getOwned(reserving.id, reserving.owner);
+    expect(expired).toMatchObject({
+      state: "expired",
+      providerStatus: "HOSTED_SESSION_RETIRED",
+      instructions: null,
+      version: 2,
+    });
+    expect(failed).toMatchObject({
+      state: "failed",
+      providerStatus: "HOSTED_SESSION_RETIRED",
+      instructions: null,
+      version: 1,
+    });
+    expect(await store.getOpen(awaiting.owner, "US")).toBeNull();
+
+    await client.unsafe(hostedRetirementMigration);
+    expect((await store.getOwned(awaiting.id, awaiting.owner))?.version).toBe(2);
+    expect((await store.getOwned(reserving.id, reserving.owner))?.version).toBe(1);
   });
 });
 

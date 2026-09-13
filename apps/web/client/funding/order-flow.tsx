@@ -204,7 +204,15 @@ export function FundingOrderFlow({
       />
     );
   }
-  if (currentOrder) return <OrderStatus order={currentOrder} onBack={onBack} />;
+  if (currentOrder) {
+    return (
+      <OrderStatus
+        order={currentOrder}
+        onBack={onBack}
+        onRefetch={orderQuery.refetch}
+      />
+    );
+  }
   if (draft) {
     return (
       <QuoteReview
@@ -480,9 +488,11 @@ function DefinitionRow({ label, value }: { label: string; value: string }) {
 function OrderStatus({
   order,
   onBack,
+  onRefetch,
 }: {
   order: FundingOrderSummary;
   onBack: () => void;
+  onRefetch?: () => Promise<unknown>;
 }) {
   const copy = stateCopy(order.state);
   return (
@@ -490,8 +500,12 @@ function OrderStatus({
       <MoneyModalBody className="gap-4 pt-4">
         <h3 className="text-lg font-semibold">{copy.title}</h3>
         <FundingNotice>{copy.body}</FundingNotice>
-        {order.instructions ? (
-          <InstructionView instruction={order.instructions} />
+        {order.instructions &&
+        (order.instructions.kind !== "embed" || order.state === "awaiting-payment") ? (
+          <InstructionView
+            instruction={order.instructions}
+            onRefetch={onRefetch}
+          />
         ) : null}
         {order.providerStatus ? (
           <p className="text-sm text-muted-foreground">
@@ -510,13 +524,22 @@ function OrderStatus({
   );
 }
 
-function InstructionView({ instruction }: { instruction: Instruction }) {
+function InstructionView({
+  instruction,
+  onRefetch,
+}: {
+  instruction: Instruction;
+  onRefetch?: () => Promise<unknown>;
+}) {
   if (instruction.kind === "redirect") {
     return (
       <a className={buttonVariants()} href={instruction.url} rel="noreferrer">
         Continue to payment
       </a>
     );
+  }
+  if (instruction.kind === "embed") {
+    return <EmbedInstruction instruction={instruction} onRefetch={onRefetch} />;
   }
   if (instruction.kind === "bank-transfer") {
     return (
@@ -593,6 +616,103 @@ function InstructionView({ instruction }: { instruction: Instruction }) {
       </div>
     </section>
   );
+}
+
+const EMBED_MESSAGE_EVENTS = new Set([
+  "onramp_api.load_pending",
+  "onramp_api.load_success",
+  "onramp_api.load_error",
+  "onramp_api.commit_success",
+  "onramp_api.commit_error",
+  "onramp_api.cancel",
+  "onramp_api.polling_start",
+  "onramp_api.polling_success",
+  "onramp_api.polling_error",
+  "onramp_api.verification_success",
+  "onramp_api.upgrade_submit_success",
+  "onramp_api.upgrade_approved",
+  "onramp_api.session_error",
+]);
+const EMBED_REFETCH_EVENTS = new Set([
+  "onramp_api.commit_success",
+  "onramp_api.polling_success",
+  "onramp_api.polling_error",
+  "onramp_api.session_error",
+  "onramp_api.commit_error",
+]);
+
+function EmbedInstruction({
+  instruction,
+  onRefetch,
+}: {
+  instruction: Extract<Instruction, { kind: "embed" }>;
+  onRefetch?: () => Promise<unknown>;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const refetchingRef = useRef(false);
+  const origin = safeHttpsOrigin(instruction.url);
+
+  useEffect(() => {
+    if (!origin || !onRefetch) return;
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== origin ||
+        event.source !== iframeRef.current?.contentWindow
+      ) return;
+      const eventName = readEmbedEventName(event.data);
+      if (!eventName || !EMBED_REFETCH_EVENTS.has(eventName)) return;
+      if (refetchingRef.current) return;
+      refetchingRef.current = true;
+      void Promise.resolve(onRefetch()).finally(() => {
+        refetchingRef.current = false;
+      });
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onRefetch, origin]);
+
+  if (!origin) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      <MoneyLine
+        value={`Pay ${formatFiatAmount(instruction.amount, instruction.currency)} with Apple Pay`}
+      />
+      <iframe
+        ref={iframeRef}
+        src={instruction.url}
+        title="Apple Pay"
+        sandbox="allow-scripts allow-same-origin"
+        referrerPolicy="no-referrer"
+        allow="payment"
+        className="h-96 w-full border-0"
+      />
+    </section>
+  );
+}
+
+function safeHttpsOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function readEmbedEventName(value: unknown): string | null {
+  let payload = value;
+  if (typeof value === "string") {
+    try {
+      payload = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const eventName = (payload as Record<string, unknown>).eventName;
+  return typeof eventName === "string" && EMBED_MESSAGE_EVENTS.has(eventName)
+    ? eventName
+    : null;
 }
 
 function CopyDefinitionRow({
