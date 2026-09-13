@@ -1,3 +1,5 @@
+import "server-only";
+
 export type MigrationGateDecision =
   | { run: true }
   | { run: false; reason: "database-unset" | "non-production-vercel" };
