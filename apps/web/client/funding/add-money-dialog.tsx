@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,6 +50,8 @@ export function AddMoneyDialog({
   onBack,
   onSelectReceive,
   providerBindings,
+  providerBindingsDisabled,
+  fundingReadError,
   selectedBinding,
   initialOrder,
   fetchAccountResource,
@@ -66,6 +68,8 @@ export function AddMoneyDialog({
   onBack: () => void;
   onSelectReceive: () => void;
   providerBindings: ReadonlyArray<FundingBinding>;
+  providerBindingsDisabled: boolean;
+  fundingReadError: { message: string; retry: () => void } | null;
   selectedBinding: FundingBinding | null;
   initialOrder: FundingOrderSummary | null;
   fetchAccountResource: (
@@ -105,6 +109,8 @@ export function AddMoneyDialog({
           regionId={regionId}
           onSelectReceive={onSelectReceive}
           providerBindings={providerBindings}
+          providerBindingsDisabled={providerBindingsDisabled}
+          fundingReadError={fundingReadError}
           onSelectBinding={onSelectBinding}
         />
       ) : null}
@@ -140,15 +146,27 @@ export function MethodBody({
   regionId,
   onSelectReceive,
   providerBindings,
+  providerBindingsDisabled,
+  fundingReadError,
   onSelectBinding,
 }: {
   regionId: RegionId;
   onSelectReceive: () => void;
   providerBindings: ReadonlyArray<FundingBinding>;
+  providerBindingsDisabled: boolean;
+  fundingReadError: { message: string; retry: () => void } | null;
   onSelectBinding: (binding: FundingBinding) => void;
 }) {
   return (
     <MoneyModalBody className="pt-4">
+      {fundingReadError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{fundingReadError.message}</AlertDescription>
+          <AlertAction>
+            <Button variant="ghost" onClick={fundingReadError.retry}>Retry</Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
       <Card>
         <CardContent className="px-2">
           <ItemGroup className="gap-0">
@@ -183,6 +201,7 @@ export function MethodBody({
                     <Button
                       variant="ghost"
                       type="button"
+                      disabled={providerBindingsDisabled}
                       onClick={() => onSelectBinding(binding)}
                       aria-describedby={`funding-method-${binding.providerId}-${binding.assetId}`}
                     />

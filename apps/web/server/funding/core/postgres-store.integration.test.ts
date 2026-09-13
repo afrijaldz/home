@@ -2,14 +2,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { SqlExecutor } from "@/server/db/sql";
+import { createPostgresSqlExecutor, type SqlExecutor } from "@/server/db/sql";
 import { PostgresFundingOrderStore } from "./postgres-store";
 import type { FundingReservation } from "./store";
 
 const connectionString = process.env.FUNDING_PG_TEST_URL?.trim();
 const describePostgres = connectionString ? describe : describe.skip;
+const TEST_SCHEMA = "funding_contract_test";
 type BunSqlClient = { unsafe(text: string, values?: unknown[]): Promise<ArrayLike<unknown>>; begin<T>(run: (transaction: BunSqlClient) => Promise<T>): Promise<T>; close(): Promise<void> };
-let client: BunSqlClient;
+let admin: BunSqlClient;
+let sql: SqlExecutor;
 let store: PostgresFundingOrderStore;
 
 function reservation(intentDigest = randomUUID()): FundingReservation {
@@ -26,14 +28,23 @@ const dispatch = { providerOrderId: "provider-order", expectedTokenAmountAtomic:
 
 describePostgres("PostgresFundingOrderStore production contract", () => {
   beforeAll(async () => {
-    client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
+    admin = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
     const migration = await readFile(resolve(import.meta.dir, "../migrations/002_funding_provider_seam.sql"), "utf8");
-    await client.unsafe("DROP TABLE IF EXISTS funding_orders");
-    await client.unsafe(migration);
-    store = new PostgresFundingOrderStore(bunExecutor(client));
+    await admin.unsafe(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+    await admin.unsafe(`CREATE SCHEMA ${TEST_SCHEMA}`);
+    await admin.begin(async (transaction) => {
+      await transaction.unsafe(`SET LOCAL search_path TO ${TEST_SCHEMA}`);
+      await transaction.unsafe(migration);
+    });
+    sql = createPostgresSqlExecutor(connectionString!, { schema: TEST_SCHEMA });
+    store = new PostgresFundingOrderStore(sql);
   });
-  beforeEach(async () => { await client.unsafe("TRUNCATE funding_orders"); });
-  afterAll(async () => { await client?.unsafe("DROP TABLE IF EXISTS funding_orders"); await client?.close(); });
+  beforeEach(async () => { await sql.query("TRUNCATE funding_orders"); });
+  afterAll(async () => {
+    await sql?.dispose?.();
+    await admin?.unsafe(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+    await admin?.close();
+  });
 
   test("concurrent reservations produce one stable order and retain the original quote token", async () => {
     const digest = randomUUID();
@@ -99,16 +110,3 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
     expect([persisted?.transactionHash, persisted?.logIndex]).toEqual([evidence.transactionHash, 7]);
   });
 });
-
-function bunExecutor(sqlClient: BunSqlClient, inTransaction = false): SqlExecutor {
-  return {
-    async query<T>(text: string, values: unknown[] = []) {
-      const rows = Array.from(await sqlClient.unsafe(text, values)) as T[];
-      return { rows, rowCount: rows.length };
-    },
-    async transaction<T>(run: (transaction: SqlExecutor) => Promise<T>) {
-      if (inTransaction) throw new Error("nested transaction unsupported");
-      return sqlClient.begin((transaction) => run(bunExecutor(transaction, true)));
-    },
-  };
-}

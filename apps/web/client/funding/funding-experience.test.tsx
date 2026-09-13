@@ -71,6 +71,46 @@ describe("FundingExperience", () => {
     expect(supportedAssets.textContent).not.toContain("BRZ");
   });
 
+  test("keeps provider bindings visible and disabled until a failed open-order read is retried", async () => {
+    let orderReads = 0;
+    const wallet = {
+      ...verifiedWallet(),
+      fetchAccountResource: async (path: string) => {
+        if (path.startsWith("/api/funding/providers")) {
+          return { providers: [redirectBinding()] };
+        }
+        if (path.startsWith("/api/funding/orders?")) {
+          orderReads += 1;
+          if (orderReads === 1) throw new Error("ORDER_UNAVAILABLE");
+          return { order: null };
+        }
+        throw new Error("unexpected request");
+      },
+    };
+
+    render(
+      <FundingExperienceForWallet
+        wallet={wallet}
+        navigateToRedirect={() => {}}
+        regionId="US"
+      />,
+    );
+
+    const provider = await page().findByRole("button", {
+      name: "Deposit USD with Coinbase",
+    });
+    expect(provider.hasAttribute("disabled")).toBe(true);
+    expect(page().getByRole("alert").textContent).toContain(
+      "Home couldn't check for an open deposit. Retry.",
+    );
+
+    fireEvent.click(page().getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(orderReads).toBe(2));
+    await waitFor(() => expect(provider.hasAttribute("disabled")).toBe(false));
+    expect(page().queryByRole("alert")).toBeNull();
+  });
+
   test("lists configured provider bindings and creates an order with only the quote token", async () => {
     const requests: Array<{ path: string; body: unknown }> = [];
     const wallet = {
