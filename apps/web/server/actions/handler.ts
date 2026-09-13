@@ -15,6 +15,11 @@ import { finalizeTradeCalls, type PendingTradeConfirmation } from "./kinds/trade
 import { createSmartAccountSignatureVerifier } from "./kinds/trade/signer";
 import type { SmartAccountSignatureVerifier } from "@/shared/trading/server-types";
 import { emitServerEvent } from "@/server/observability/log";
+import {
+  createActionHandleResolver,
+  type ActionHandleResolver,
+  type HandleResolution,
+} from "./reconcile";
 
 export type ActionAuthorizer = SessionAuthorizer;
 
@@ -25,6 +30,9 @@ const privateHeaders = {
 } as const;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
+const RECONCILE_GRACE_MS = 20_000;
+const RECONCILE_MAX_PER_REQUEST = 5;
+const RECONCILE_DEADLINE_MS = 3_000;
 
 async function authorizeOwner(request: Request, authorize: ActionAuthorizer): Promise<MoneyActionOwner | Response> {
   const boundary = await authorizeSession(request, authorize);
@@ -35,10 +43,12 @@ async function authorizeOwner(request: Request, authorize: ActionAuthorizer): Pr
 
 export function createGetActionHandler(dependencies: {
   authorize: ActionAuthorizer;
-  store?: Pick<ActionsStore, "get">;
+  store?: Pick<ActionsStore, "get" | "recordHandle">;
   readReceipt?: (hash: `0x${string}`, signal?: AbortSignal) => Promise<TransferReceiptStatus>;
+  resolveHandle?: ActionHandleResolver;
   now?: () => Date;
 }) {
+  const resolveHandle = dependencies.resolveHandle ?? createActionHandleResolver();
   return async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     const owner = await authorizeOwner(request, dependencies.authorize);
     if (owner instanceof Response) return owner;
@@ -55,16 +65,25 @@ export function createGetActionHandler(dependencies: {
         expiresAt: row.summary.expiresAt,
       } satisfies GetActionPendingResponse, 200);
     }
-    let receipt: ActionReceiptState | null = null;
-    if (row.transaction_hash && hashPattern.test(row.transaction_hash)) {
-      try {
-        const readReceipt = dependencies.readReceipt ?? ((hash: `0x${string}`, signal?: AbortSignal) => createTransferReceiptReader()(hash, signal));
-        receipt = receiptState(await readReceipt(row.transaction_hash.toLowerCase() as `0x${string}`, request.signal));
-      } catch {
-        receipt = "unavailable";
-      }
+    const now = dependencies.now?.() ?? new Date();
+    const deadline = createDeadline(request.signal);
+    try {
+      const reconciled = isReconcileCandidate(row, now)
+        ? await reconcileRow({
+            row,
+            owner,
+            store: dependencies.store ?? getActionsStore(),
+            resolveHandle,
+            signal: deadline.signal,
+            route: "/api/actions/:id",
+          })
+        : row;
+      const receiptSignal = row.transaction_hash ? deadline.signal : request.signal;
+      const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, receiptSignal);
+      return privateJson(await presentAction(reconciled, owner, receipt, now), 200);
+    } finally {
+      deadline.dispose();
     }
-    return privateJson(await presentAction(row, owner, receipt, dependencies.now?.()), 200);
   };
 }
 
@@ -166,29 +185,44 @@ export function createHandleActionHandler(dependencies: {
 
 export function createListActionsHandler(dependencies: {
   authorize: ActionAuthorizer;
-  store?: Pick<ActionsStore, "list">;
+  store?: Pick<ActionsStore, "list" | "recordHandle">;
   readReceipt?: (hash: `0x${string}`, signal?: AbortSignal) => Promise<TransferReceiptStatus>;
+  resolveHandle?: ActionHandleResolver;
   now?: () => Date;
 }) {
+  const resolveHandle = dependencies.resolveHandle ?? createActionHandleResolver();
   return async function GET(request: Request): Promise<Response> {
     const owner = await authorizeOwner(request, dependencies.authorize);
     if (owner instanceof Response) return owner;
     const store = dependencies.store ?? getActionsStore();
-    const readReceipt = dependencies.readReceipt ?? ((hash, signal) => createTransferReceiptReader()(hash, signal));
     const rows = await store.list(owner);
-    const actions = await Promise.all(rows.map(async (row) => {
-      let receipt: ActionReceiptState | null = null;
-      if (row.transaction_hash && hashPattern.test(row.transaction_hash)) {
-        try {
-          const result = await readReceipt(row.transaction_hash.toLowerCase() as `0x${string}`, request.signal);
-          receipt = receiptState(result);
-        } catch {
-          receipt = "unavailable";
-        }
-      }
-      return presentAction(row, owner, receipt, dependencies.now?.());
-    }));
-    return privateJson({ actions } satisfies ListActionsResponse, 200);
+    const now = dependencies.now?.() ?? new Date();
+    const candidateIds = new Set(rows
+      .filter((row) => isReconcileCandidate(row, now))
+      .sort((left, right) => confirmedAtMs(right) - confirmedAtMs(left))
+      .slice(0, RECONCILE_MAX_PER_REQUEST)
+      .map((row) => row.id));
+    const deadline = createDeadline(request.signal);
+    try {
+      const actions = await Promise.all(rows.map(async (row) => {
+        const reconciled = candidateIds.has(row.id)
+          ? await reconcileRow({
+              row,
+              owner,
+              store,
+              resolveHandle,
+              signal: deadline.signal,
+              route: "/api/actions",
+            })
+          : row;
+        const receiptSignal = row.transaction_hash ? deadline.signal : request.signal;
+        const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, receiptSignal);
+        return presentAction(reconciled, owner, receipt, now);
+      }));
+      return privateJson({ actions } satisfies ListActionsResponse, 200);
+    } finally {
+      deadline.dispose();
+    }
   };
 }
 
@@ -221,6 +255,101 @@ export async function presentAction(
       accountProvider: owner.accountProvider,
     },
   } satisfies ActionListItem & GetActionResponse;
+}
+
+async function reconcileRow(input: {
+  row: ActionRow;
+  owner: MoneyActionOwner;
+  store: Pick<ActionsStore, "recordHandle">;
+  resolveHandle: ActionHandleResolver;
+  signal: AbortSignal;
+  route: string;
+}): Promise<ActionRow> {
+  const startedAt = Date.now();
+  const observe = (resolution: HandleResolution["status"], outcome: "ok" | "conflict" | "unavailable" | "failed") => {
+    emitServerEvent("action-reconcile", {
+      route: input.route,
+      code: resolution.toUpperCase(),
+      outcome,
+      provider: input.row.provider,
+      owner: input.owner,
+      durationMs: Date.now() - startedAt,
+    });
+  };
+  try {
+    const resolution = await input.resolveHandle(input.row, input.signal);
+    if (resolution.status === "pending") return input.row;
+    if (resolution.status === "unavailable") {
+      observe(resolution.status, "unavailable");
+      return input.row;
+    }
+    if (resolution.status === "failed") {
+      observe(resolution.status, "failed");
+      return input.row;
+    }
+    const updated = await input.store.recordHandle(input.owner, input.row.id, {
+      transactionHash: resolution.transactionHash,
+    });
+    observe(resolution.status, updated ? "ok" : "conflict");
+    return updated ?? input.row;
+  } catch {
+    observe("unavailable", "unavailable");
+    return input.row;
+  }
+}
+
+async function readRowReceipt(
+  row: ActionRow,
+  readReceipt: ((hash: `0x${string}`, signal?: AbortSignal) => Promise<TransferReceiptStatus>) | undefined,
+  signal: AbortSignal,
+): Promise<ActionReceiptState | null> {
+  if (!row.transaction_hash || !hashPattern.test(row.transaction_hash)) return null;
+  try {
+    const reader = readReceipt ?? ((hash: `0x${string}`, nextSignal?: AbortSignal) =>
+      createTransferReceiptReader()(hash, nextSignal));
+    return receiptState(await reader(
+      row.transaction_hash.toLowerCase() as `0x${string}`,
+      signal,
+    ));
+  } catch {
+    return "unavailable";
+  }
+}
+
+function isReconcileCandidate(row: ActionRow, now: Date): boolean {
+  const confirmedAt = confirmedAtMs(row);
+  return row.provider === "base-account" &&
+    row.confirmed_at !== null &&
+    row.transaction_hash === null &&
+    row.provider_handle !== null &&
+    Number.isFinite(confirmedAt) &&
+    now.getTime() - confirmedAt >= RECONCILE_GRACE_MS;
+}
+
+function confirmedAtMs(row: ActionRow): number {
+  if (!row.confirmed_at) return Number.NEGATIVE_INFINITY;
+  const value = row.confirmed_at instanceof Date
+    ? row.confirmed_at.getTime()
+    : Date.parse(row.confirmed_at);
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+}
+
+function createDeadline(parentSignal: AbortSignal): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  if (parentSignal.aborted) abortFromParent();
+  const timeout = setTimeout(() => controller.abort(), RECONCILE_DEADLINE_MS);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      parentSignal.removeEventListener("abort", abortFromParent);
+    },
+  };
 }
 
 export function preparedActionFromResponse(

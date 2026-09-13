@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ActionRow } from "./store";
-import { createConfirmActionHandler, createGetActionHandler } from "./handler";
+import { createConfirmActionHandler, createGetActionHandler, createListActionsHandler } from "./handler";
 import { setObservabilityLogWriterForTests } from "@/server/observability/log";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const ADDRESS = "0x1111111111111111111111111111111111111111" as const;
 const CALL = { to: ADDRESS, data: "0x1234" as const, value: "0" };
+const HANDLE = "bundle:base-account:fixture";
+const HASH = `0x${"ab".repeat(32)}` as const;
 const row: ActionRow = {
   id: ID,
   owner_key: "fixture",
@@ -28,6 +30,17 @@ function authorize(subject = "owner-a", accountProvider: "cdp-embedded" | "base-
   });
 }
 
+function confirmedBaseRow(overrides: Partial<ActionRow> = {}): ActionRow {
+  return {
+    ...row,
+    provider: "base-account",
+    pending: null,
+    confirmed_at: "2026-09-12T12:05:00.000Z",
+    provider_handle: HANDLE,
+    ...overrides,
+  };
+}
+
 function context() {
   return { params: Promise.resolve({ id: ID }) };
 }
@@ -41,9 +54,19 @@ function request(path: string, init?: RequestInit) {
   });
 }
 
+function baseRequest(path: string, init?: RequestInit) {
+  return request(path, {
+    ...init,
+    headers: { "X-Home-Account-Provider": "base-account", ...init?.headers },
+  });
+}
+
 describe("actions HTTP handlers", () => {
   test("GET resumes an owner-scoped unconfirmed review without exposing pending metadata", async () => {
-    const handler = createGetActionHandler({ authorize: authorize(), store: { get: async () => row } });
+    const handler = createGetActionHandler({
+      authorize: authorize(),
+      store: { get: async () => row, recordHandle: async () => null },
+    });
     const response = await handler(request(`/api/actions/${ID}`), context());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -59,7 +82,7 @@ describe("actions HTTP handlers", () => {
     const confirmed = { ...row, pending: null, confirmed_at: "2026-09-12T12:05:00.000Z" };
     const handler = createGetActionHandler({
       authorize: authorize(),
-      store: { get: async () => confirmed },
+      store: { get: async () => confirmed, recordHandle: async () => null },
       now: () => new Date("2026-09-12T12:10:00.000Z"),
     });
     const response = await handler(request(`/api/actions/${ID}`), context());
@@ -68,7 +91,10 @@ describe("actions HTTP handlers", () => {
   });
 
   test("GET returns the same 404 for another owner", async () => {
-    const handler = createGetActionHandler({ authorize: authorize("owner-b"), store: { get: async () => null } });
+    const handler = createGetActionHandler({
+      authorize: authorize("owner-b"),
+      store: { get: async () => null, recordHandle: async () => null },
+    });
     const response = await handler(request(`/api/actions/${ID}`), context());
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: { code: "ACTION_NOT_FOUND", message: "The action was not found." } });
@@ -171,5 +197,164 @@ describe("actions HTTP handlers", () => {
     const response = await handler(request(`/api/actions/${ID}/confirm`, { method: "POST", headers: { "X-Home-Account-Provider": "base-account" }, body: JSON.stringify({ signature }) }), context());
     expect(response.status).toBe(200);
     expect(confirmedCalls).toEqual([{ ...CALL, data: `0x1234${"41".padStart(64, "0")}${signature.slice(2)}` }]);
+  });
+
+  test("list does not reconcile a candidate inside the client grace period", async () => {
+    let resolverCalls = 0;
+    const candidate = confirmedBaseRow({ confirmed_at: "2026-09-12T12:09:50.000Z" });
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: { list: async () => [candidate], recordHandle: async () => null },
+      resolveHandle: async () => { resolverCalls += 1; return { status: "pending" }; },
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+
+    expect(response.status).toBe(200);
+    expect(resolverCalls).toBe(0);
+  });
+
+  test("list records a completed handle and derives status from its receipt", async () => {
+    const writes: string[] = [];
+    setObservabilityLogWriterForTests((line) => writes.push(line));
+    const candidate = confirmedBaseRow();
+    const recordedInputs: unknown[] = [];
+    let receiptHash: string | undefined;
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        list: async () => [candidate],
+        recordHandle: async (_owner, _id, input) => {
+          recordedInputs.push(input);
+          return { ...candidate, transaction_hash: input.transactionHash ?? null };
+        },
+      },
+      resolveHandle: async () => ({ status: "complete", transactionHash: HASH }),
+      readReceipt: async (hash) => {
+        receiptHash = hash;
+        return { status: "confirmed", transactionHash: hash, blockNumber: "1", success: true };
+      },
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+    const body = await response.json() as { actions: Array<{ status: string }> };
+
+    expect(response.status).toBe(200);
+    expect(recordedInputs).toEqual([{ transactionHash: HASH }]);
+    expect(receiptHash).toBe(HASH);
+    expect(body.actions[0]?.status).toBe("confirmed");
+    expect(JSON.parse(writes[0] ?? "{}")).toMatchObject({
+      kind: "action-reconcile",
+      route: "/api/actions",
+      code: "COMPLETE",
+      outcome: "ok",
+      provider: "base-account",
+      level: "info",
+    });
+  });
+
+  test("list leaves pending handle resolutions unrecorded", async () => {
+    const candidate = confirmedBaseRow();
+    let recordCalls = 0;
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        list: async () => [candidate],
+        recordHandle: async () => { recordCalls += 1; return null; },
+      },
+      resolveHandle: async () => ({ status: "pending" }),
+    });
+
+    expect((await handler(baseRequest("/api/actions"))).status).toBe(200);
+    expect(recordCalls).toBe(0);
+  });
+
+  test("list tolerates a recordHandle conflict and presents the stored row", async () => {
+    setObservabilityLogWriterForTests(() => undefined);
+    const candidate = confirmedBaseRow();
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: { list: async () => [candidate], recordHandle: async () => null },
+      resolveHandle: async () => ({ status: "complete", transactionHash: HASH }),
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+    const body = await response.json() as { actions: Array<{ status: string; transactionHash?: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.actions[0]).toMatchObject({ status: "pending" });
+    expect(body.actions[0]?.transactionHash).toBeUndefined();
+  });
+
+  test("list reconciles only the newest five candidates", async () => {
+    const candidates = Array.from({ length: 7 }, (_, index) => confirmedBaseRow({
+      id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
+      confirmed_at: new Date(Date.parse("2026-09-12T12:00:00.000Z") + index * 1_000).toISOString(),
+      provider_handle: `${HANDLE}:${index}`,
+    }));
+    const resolvedIds: string[] = [];
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: { list: async () => candidates, recordHandle: async () => null },
+      resolveHandle: async (candidate) => { resolvedIds.push(candidate.id); return { status: "pending" }; },
+    });
+
+    expect((await handler(baseRequest("/api/actions"))).status).toBe(200);
+    expect(resolvedIds).toHaveLength(5);
+    expect(resolvedIds.sort()).toEqual(candidates.slice(2).map(({ id }) => id).sort());
+  });
+
+  test("list survives a throwing resolver", async () => {
+    setObservabilityLogWriterForTests(() => undefined);
+    const candidate = confirmedBaseRow();
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: { list: async () => [candidate], recordHandle: async () => null },
+      resolveHandle: async () => { throw new Error("provider failed"); },
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).actions[0]).toMatchObject({ id: candidate.id, status: "pending" });
+  });
+
+  test("GET reconciles one eligible candidate", async () => {
+    setObservabilityLogWriterForTests(() => undefined);
+    const candidate = confirmedBaseRow();
+    let resolverCalls = 0;
+    const handler = createGetActionHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        get: async () => candidate,
+        recordHandle: async (_owner, _id, input) => ({
+          ...candidate,
+          transaction_hash: input.transactionHash ?? null,
+        }),
+      },
+      resolveHandle: async () => {
+        resolverCalls += 1;
+        return { status: "complete", transactionHash: HASH };
+      },
+      readReceipt: async (hash) => ({
+        status: "confirmed",
+        transactionHash: hash,
+        blockNumber: "1",
+        success: false,
+      }),
+    });
+
+    const response = await handler(baseRequest(`/api/actions/${ID}`), context());
+
+    expect(response.status).toBe(200);
+    expect(resolverCalls).toBe(1);
+    expect(await response.json()).toMatchObject({ id: ID, transactionHash: HASH, status: "failed" });
   });
 });
