@@ -146,6 +146,7 @@ export function readNativeBaseSessionToken(
       !address ||
       payload.session.user.subject !== sessionForAddress(address).user.subject ||
       !Number.isFinite(Date.parse(payload.issuedAt)) ||
+      !Number.isFinite(Date.parse(payload.expiresAt)) ||
       Date.parse(payload.expiresAt) <= now.getTime()
     ) return { kind: "invalid" };
     return { kind: "valid", session: sessionForAddress(address) };

@@ -77,6 +77,15 @@ describe("CDP render session", () => {
         expected: null,
       },
       {
+        name: "malformed expiry",
+        read: () => readCdpRenderSession(
+          payloadCookies({ expiresAt: "not-a-date" }),
+          KEY,
+          NOW,
+        ),
+        expected: null,
+      },
+      {
         name: "bad HMAC",
         read: () => readCdpRenderSession(cookieStore([
           [HOME_CDP_SESSION_COOKIE, tamper(signed)],

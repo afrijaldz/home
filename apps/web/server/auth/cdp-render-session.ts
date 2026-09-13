@@ -88,6 +88,7 @@ export function readCdpRenderSession(
       !noncePattern.test(payload.nonce) ||
       !equalText(live, payload.nonce) ||
       !Number.isFinite(Date.parse(payload.issuedAt)) ||
+      !Number.isFinite(Date.parse(payload.expiresAt)) ||
       Date.parse(payload.expiresAt) <= now.getTime()
     ) return null;
 
