@@ -40,11 +40,14 @@ function input(overrides: {
   identity?: VerifiedAccountSession | null;
   native?: Partial<AccountWalletSdkBoundary>;
   isSettled?: boolean;
+  hasSettled?: boolean;
   initializationError?: "provider-unavailable";
+  restore?: () => Promise<void>;
   clearNative?: () => Promise<void>;
   cdpSignOut?: () => Promise<void>;
 } = {}): CompositeSdkBoundaryInput {
   const identity = overrides.identity ?? null;
+  const isSettled = overrides.isSettled ?? true;
   return {
     cdp: boundary(overrides.cdp),
     native: {
@@ -57,8 +60,10 @@ function input(overrides: {
         ...overrides.native,
       }),
       identity,
-      isSettled: overrides.isSettled ?? true,
+      isSettled,
+      hasSettled: overrides.hasSettled ?? isSettled,
       initializationError: overrides.initializationError,
+      restore: overrides.restore ?? (async () => {}),
     },
     clearNative: overrides.clearNative ?? (async () => {}),
     cdpSignOut: overrides.cdpSignOut ?? (async () => {}),
@@ -80,7 +85,7 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
     run: async () => {
       for (const unsettled of [
         input({ cdp: { isInitialized: false, isSignedIn: true, ownerKey: "cdp-owner", provisionalSession: cdpSession }, identity: nativeSession }),
-        input({ cdp: { isSignedIn: true, ownerKey: "cdp-owner", provisionalSession: cdpSession }, identity: nativeSession, isSettled: false }),
+        input({ cdp: { isSignedIn: true, ownerKey: "cdp-owner", provisionalSession: cdpSession }, identity: nativeSession, isSettled: false, hasSettled: false }),
       ]) {
         const sdk = composeSdkBoundaries(unsettled);
         expect({
@@ -184,6 +189,38 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
       await sdk.verifySiweSignature("flow", "0x1234");
       await Promise.resolve();
       expect(events).toEqual(["verify"]);
+    },
+  },
+  {
+    name: "keeps a healthy CDP owner exported during later native restores",
+    run: async () => {
+      const retrying = composeSdkBoundaries(input({
+        cdp: { isSignedIn: true, ownerKey: "cdp-owner", provisionalSession: cdpSession },
+        isSettled: false,
+        hasSettled: true,
+      }));
+      expect({
+        isInitialized: retrying.isInitialized,
+        isSignedIn: retrying.isSignedIn,
+        ownerKey: retrying.ownerKey,
+        provisionalSession: retrying.provisionalSession,
+      }).toEqual({
+        isInitialized: true,
+        isSignedIn: true,
+        ownerKey: "cdp-owner",
+        provisionalSession: cdpSession,
+      });
+    },
+  },
+  {
+    name: "exports native retry only for a native initialization failure",
+    run: async () => {
+      const restore = async () => {};
+      expect(composeSdkBoundaries(input({ restore })).retryInitialization).toBeUndefined();
+      expect(composeSdkBoundaries(input({
+        initializationError: "provider-unavailable",
+        restore,
+      })).retryInitialization).toBe(restore);
     },
   },
   {

@@ -7,7 +7,9 @@ export type CompositeSdkBoundaryInput = {
     boundary: AccountWalletSdkBoundary;
     identity: VerifiedAccountSession | null;
     isSettled: boolean;
+    hasSettled: boolean;
     initializationError?: "provider-unavailable";
+    restore: () => Promise<void>;
   };
   clearNative: () => Promise<void>;
   cdpSignOut: () => Promise<void>;
@@ -19,7 +21,7 @@ export function composeSdkBoundaries({
   clearNative,
   cdpSignOut,
 }: CompositeSdkBoundaryInput): AccountWalletSdkBoundary {
-  const isInitialized = cdp.isInitialized && native.isSettled;
+  const isInitialized = cdp.isInitialized && native.hasSettled;
   const nativeSignedIn = isInitialized && native.identity !== null;
   const cdpSignedIn = isInitialized && !nativeSignedIn && cdp.isSignedIn;
 
@@ -28,7 +30,7 @@ export function composeSdkBoundaries({
     ...(isInitialized && native.initializationError && !cdp.isSignedIn
       ? { initializationError: native.initializationError }
       : {}),
-    retryInitialization: native.boundary.retryInitialization,
+    retryInitialization: native.initializationError ? native.restore : undefined,
     isInitialized,
     isSignedIn: nativeSignedIn || cdpSignedIn,
     ownerKey: nativeSignedIn ? native.boundary.ownerKey : cdpSignedIn ? cdp.ownerKey : null,

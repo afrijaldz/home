@@ -23,6 +23,7 @@ import { BASE_CHAIN_ID } from "@/shared/account/session-types";
 export type NativeBaseIdentity = {
   identity: VerifiedAccountSession | null;
   isSettled: boolean;
+  hasSettled: boolean;
   initializationError?: "provider-unavailable";
   restore: (signal?: AbortSignal) => Promise<void>;
   boundary: AccountWalletSdkBoundary;
@@ -31,6 +32,7 @@ export type NativeBaseIdentity = {
 export function useNativeBaseIdentity(): NativeBaseIdentity {
   const [identity, setIdentity] = useState<VerifiedAccountSession | null>(null);
   const [isSettled, setIsSettled] = useState(false);
+  const [hasSettled, setHasSettled] = useState(false);
   const [initializationError, setInitializationError] = useState<
     "provider-unavailable" | undefined
   >();
@@ -54,6 +56,7 @@ export function useNativeBaseIdentity(): NativeBaseIdentity {
     } finally {
       if (!signal?.aborted && sequence === restoreSequence.current) {
         setIsSettled(true);
+        setHasSettled(true);
       }
     }
   }, []);
@@ -98,8 +101,8 @@ export function useNativeBaseIdentity(): NativeBaseIdentity {
   }), [identity, initializationError, isSettled, restore]);
 
   return useMemo(
-    () => ({ identity, isSettled, initializationError, restore, boundary }),
-    [boundary, identity, initializationError, isSettled, restore],
+    () => ({ identity, isSettled, hasSettled, initializationError, restore, boundary }),
+    [boundary, hasSettled, identity, initializationError, isSettled, restore],
   );
 }
 
