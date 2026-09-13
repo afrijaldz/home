@@ -1,6 +1,6 @@
 # Borrow
 
-Jesse-locked September 13, 2026 ([#395](https://github.com/jessepollak/home/issues/395)). This document describes the delivered Borrow backend boundary; the routed portfolio and MoneyModal UX are tracked separately.
+Jesse-locked September 13, 2026 ([#395](https://github.com/jessepollak/home/issues/395)). This document describes the delivered Borrow boundary, including the routed portfolio and MoneyModal experience.
 
 ## Launch boundary
 
@@ -9,6 +9,12 @@ Borrow uses an operator-controlled, compile-time `BorrowMarketRef` registry on B
 Removing or warning a market must not remove management access for an existing position. Operators retain its trusted registry tuple and change it to `reducing-only`; repay, repay-all, close, add-collateral, and zero-debt collateral withdrawal remain available when their required reads verify, while borrow-more and debt-bearing collateral withdrawal remain blocked.
 
 Every detail read and action prepare verifies `idToMarketParams` against the trusted registry tuple at a pinned block. The server derives the owner, `onBehalf`, receiver, Morpho deployment, tokens, oracle, IRM, and LLTV. It simulates the exact ordered Coinbase smart-account batch and reconfirms the pinned block hash. The client sends only a configured market id, an operation, and decimal-integer base-unit amounts.
+
+## Routed UI
+
+Signed-in users open Borrow at `/dashboard?panel=borrow`. A configured market detail uses `/dashboard?panel=borrow&market=<market-id>`; the client accepts only market ids from the compile-time registry. The overview shows verified active positions before other enabled opportunities, preserves partial-discovery uncertainty, and routes every action through the shared MoneyModal prepare/review/confirm flow.
+
+Borrow review is server-authored. The client displays the prepared action's exact movements, projected health or `No debt`, liquidation price, and all server warnings. Prepared reviews expire after two minutes and must be prepared again before confirmation. Repay-all and close use a wallet-capped debt buffer for accrual while the server remains authoritative over exact borrow shares, finite approval, simulation, and the reviewed maximum.
 
 ## Private APIs
 
