@@ -19,7 +19,7 @@ type SessionBoundary = (
 ) => Promise<VerifiedAccountSession | Response>;
 
 export const sessionHandler = createSessionHandler({
-  getValidator: getCdpAccessTokenValidator,
+  getValidator: () => getCdpAccessTokenValidator(),
   baseAccountEnabled: () => isHomeSessionConfigured(process.env.HOME_SESSION_SECRET),
 });
 
