@@ -113,6 +113,7 @@ export function HomeShell({
   const balancesReturnScrollRef = useRef(0);
   const panelStageRef = useRef<HTMLElement>(null);
   const explicitLogoutRef = useRef(false);
+  const landingRedirectedRef = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(
     initialAccountOpen || (routeMode === "landing" && initialUrlIntent.account === "signin"),
   );
@@ -318,6 +319,17 @@ export function HomeShell({
   const activitySession: VerifiedAccountSession | null =
     isVerified && account.session?.smartAccount ? account.session : null;
   useEffect(() => {
+    if (
+      routeMode === "landing" &&
+      account.verification !== null &&
+      parseShellLocation(new URLSearchParams(window.location.search)).account !== "signin" &&
+      !landingRedirectedRef.current
+    ) {
+      landingRedirectedRef.current = true;
+      router.replace("/dashboard", { scroll: false });
+    }
+  }, [account.verification, routeMode, router]);
+  useEffect(() => {
     if (routeMode === "dashboard" && isSignedOut && !explicitLogoutRef.current) {
       router.replace("/?account=signin", { scroll: false });
     }
@@ -401,15 +413,16 @@ export function HomeShell({
   }
 
   function signOut() {
+    explicitLogoutRef.current = true;
     setIsAccountSettingsOpen(false);
     setForwardRequest((request) => request + 1);
     disarmBalancesRestore();
     setBalancesRevealReset((resetSignal) => resetSignal + 1);
-    if (routeMode === "dashboard") {
-      explicitLogoutRef.current = true;
-      router.replace("/", { scroll: false });
-    }
-    void account.signOut().catch(() => {});
+    void account.signOut()
+      .then(() => {
+        if (routeMode === "dashboard") router.replace("/", { scroll: false });
+      })
+      .catch(() => {});
   }
 
   const nestedChromeTitle = isAccountSettingsOpen
