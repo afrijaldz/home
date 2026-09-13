@@ -80,6 +80,7 @@ const read: BalancesRead = {
     hash: `0x${"1".repeat(64)}`,
     timestamp: "1",
   },
+  observedAt: "2026-09-13T12:00:00.000Z",
   holdings: [usdc, dust, stale],
   coverage: {
     registry: "complete",

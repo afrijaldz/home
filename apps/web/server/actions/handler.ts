@@ -35,6 +35,7 @@ const RECONCILE_MAX_PER_REQUEST = 5;
 // Window step matches the client's Activity poll so >5 candidates are covered across consecutive requests.
 const RECONCILE_ROTATION_MS = 10_000;
 const RECONCILE_DEADLINE_MS = 3_000;
+const BALANCES_HOT_WINDOW_MS = 60_000;
 let defaultActionHandleResolver: ActionHandleResolver | null = null;
 
 function getDefaultActionHandleResolver(): ActionHandleResolver {
@@ -97,6 +98,7 @@ export function createConfirmActionHandler(dependencies: {
   authorize: ActionAuthorizer;
   store?: Pick<ActionsStore, "get" | "confirm">;
   verifySmartAccountSignature?: SmartAccountSignatureVerifier;
+  markHot?: (address: `0x${string}`, until: Date) => Promise<void>;
   now?: () => Date;
 }) {
   return async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -150,6 +152,11 @@ export function createConfirmActionHandler(dependencies: {
 
     const row = await store.confirm(owner, id, calls);
     if (!row || !row.pending?.calls?.length) return fail("ACTION_NOT_FOUND", "The action is unavailable or already confirmed.", 404);
+    const signalTime = dependencies.now?.() ?? new Date();
+    fireAndForgetBalanceSignal(() => dependencies.markHot?.(
+      owner.address,
+      new Date(signalTime.getTime() + BALANCES_HOT_WINDOW_MS),
+    ));
     return privateJson({ id: row.id, calls: row.pending.calls, summary: row.summary, expiresAt: row.summary.expiresAt } satisfies ConfirmActionResponse, 200);
   };
 }
@@ -157,6 +164,8 @@ export function createConfirmActionHandler(dependencies: {
 export function createHandleActionHandler(dependencies: {
   authorize: ActionAuthorizer;
   store?: Pick<ActionsStore, "recordHandle">;
+  markHot?: (address: `0x${string}`, until: Date) => Promise<void>;
+  now?: () => Date;
 }) {
   return async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     const startedAt = Date.now();
@@ -184,8 +193,13 @@ export function createHandleActionHandler(dependencies: {
       return fail("INVALID_ACTION_HANDLE", "A provider handle or transaction hash is required.", 400);
     }
     const row = await (dependencies.store ?? getActionsStore()).recordHandle(owner, id, { providerHandle, transactionHash });
-    return row ? privateJson({ action: await presentAction(row, owner) } satisfies HandleActionResponse, 200)
-      : fail("ACTION_NOT_FOUND", "The action is unavailable or the handle conflicts.", 404);
+    if (!row) return fail("ACTION_NOT_FOUND", "The action is unavailable or the handle conflicts.", 404);
+    const signalTime = dependencies.now?.() ?? new Date();
+    fireAndForgetBalanceSignal(() => dependencies.markHot?.(
+      owner.address,
+      new Date(signalTime.getTime() + BALANCES_HOT_WINDOW_MS),
+    ));
+    return privateJson({ action: await presentAction(row, owner) } satisfies HandleActionResponse, 200);
   };
 }
 
@@ -397,6 +411,15 @@ function privateError(code: string, message: string, status: number): Response {
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function fireAndForgetBalanceSignal(run: () => Promise<void> | undefined): void {
+  try {
+    const pending = run();
+    if (pending) void pending.catch(() => console.error("Balance invalidation signal failed."));
+  } catch {
+    console.error("Balance invalidation signal failed.");
+  }
 }
 
 function isPendingTradeConfirmation(pending: PendingAction): pending is PendingAction & PendingTradeConfirmation {

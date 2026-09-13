@@ -58,7 +58,15 @@ async function discoverMigrations(): Promise<Migration[]> {
       id: `funding/${name}`,
       path: resolve(fundingDirectory, name),
     }));
-  return [...db, ...funding];
+  return [...db, ...funding].sort((left, right) => {
+    const byNumber = migrationNumber(left) - migrationNumber(right);
+    return byNumber || left.id.localeCompare(right.id);
+  });
+}
+
+function migrationNumber(migration: Migration): number {
+  const match = /(?:^|\/)(\d+)_/.exec(migration.id);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 async function isApplied(sql: MigrationSql, id: string): Promise<boolean> {

@@ -20,6 +20,7 @@ export type FundingCoreDependencies = {
   currentBaseBlock: () => Promise<string>;
   verifyReceipt: (order: FundingOrder, hash: `0x${string}`) => Promise<ReceiptMatch>;
   logUnmatchedWebhook?: (event: { providerId: string; reason: "invalid" | "unmatched" }) => void;
+  markStale?: (address: `0x${string}`, at: Date) => Promise<void>;
   now?: () => Date;
 };
 
@@ -211,7 +212,21 @@ export class FundingCore {
     if (!updated) return await this.deps.store.getOwned(order.id, order.owner) ?? order;
     if (observation.transactionHash) {
       const evidence = await this.deps.verifyReceipt(updated, observation.transactionHash);
-      if (evidence) updated = await this.deps.store.claimReceipt(order.id, { ...evidence, expectedVersion: updated.version, updatedAt: this.now().toISOString() }) ?? updated;
+      if (evidence) {
+        const receivedAt = this.now();
+        const received = await this.deps.store.claimReceipt(order.id, {
+          ...evidence,
+          expectedVersion: updated.version,
+          updatedAt: receivedAt.toISOString(),
+        });
+        if (received) {
+          updated = received;
+          fireAndForgetBalanceSignal(() => this.deps.markStale?.(
+            received.destination,
+            receivedAt,
+          ));
+        }
+      }
     }
     return updated;
   }
@@ -248,3 +263,11 @@ function validKycFields(fields: Record<string, string>, definitions: ReadonlyArr
   return expected.length === supplied.length && expected.every((name, index) => name === supplied[index] && fields[name].trim().length > 0);
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function fireAndForgetBalanceSignal(run: () => Promise<void> | undefined): void {
+  try {
+    const pending = run();
+    if (pending) void pending.catch(() => console.error("Balance invalidation signal failed."));
+  } catch {
+    console.error("Balance invalidation signal failed.");
+  }
+}
