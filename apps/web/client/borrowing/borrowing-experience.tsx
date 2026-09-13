@@ -62,6 +62,7 @@ import { resolvePresentation, type RegionId } from "@/config/regions";
 import {
   BORROW_COLLATERAL_TOKEN,
   BORROW_LOAN_TOKEN,
+  BORROW_MARKET_ID,
 } from "@/shared/borrowing/config";
 import type {
   BorrowOperation,
@@ -124,9 +125,11 @@ type LimitPresentation = {
 const BORROW_OPERATION_LABELS: Record<BorrowOperation, string> = {
   "supply-collateral": "Supply cbBTC collateral",
   borrow: "Borrow USDC",
+  "supply-and-borrow": "Supply cbBTC and borrow USDC",
   repay: "Repay USDC (partial)",
   "repay-all": "Repay all USDC debt",
   "withdraw-collateral": "Withdraw cbBTC collateral",
+  "close-position": "Close position",
 };
 
 /** Not routed today (D4: `/borrow` deleted); retained for a future Borrow shell panel. */
@@ -172,7 +175,7 @@ function BorrowExperienceInner({
     meta: dataOwnerKey ? ownerQueryMeta(dataOwnerKey, "owner") : undefined,
     queryFn: ({ signal }) => {
       if (!fetchAccountResource) throw new Error("Borrowing is unavailable.");
-      return fetchAccountResource("/api/borrow", { signal });
+      return fetchAccountResource(`/api/borrow/markets/${BORROW_MARKET_ID}`, { signal });
     },
     select: (value) => {
       if (!owner) throw new Error("Borrowing is unavailable.");
@@ -212,13 +215,12 @@ function BorrowExperienceInner({
     if (!snapshot || !prepareMoneyAction) return;
     setPreview({ status: "loading" });
     try {
+      const amountBaseUnits = parseClientTokenAmount(amount, actionAsset.decimals);
       const action = await prepareMoneyAction(
         operation === "repay-all" ? "repay" : operation,
-        {
-          operation,
-          amount,
-          snapshotBlockHash: snapshot.source.blockHash,
-        },
+        operation === "repay-all"
+          ? { marketId: snapshot.market.id, operation, maximumRepayBaseUnits: amountBaseUnits }
+          : { marketId: snapshot.market.id, operation, amountBaseUnits },
       );
       setPreview({ status: "prepared", action });
     } catch (error) {
@@ -279,6 +281,9 @@ function BorrowExperienceInner({
           ),
           secondSuffix: "wallet balance",
         };
+      case "supply-and-borrow":
+      case "close-position":
+        return null;
       case "withdraw-collateral":
         return {
           value: formatPresentationTokenAmount(
@@ -755,6 +760,16 @@ function usePersistedPresentationRegion(): RegionId {
     }).region.id;
   });
   return regionId;
+}
+
+function parseClientTokenAmount(value: string, decimals: number): string {
+  const normalized = value.trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(normalized)) throw new Error("Enter a positive decimal amount.");
+  const [whole, fraction = ""] = normalized.split(".");
+  if (fraction.length > decimals) throw new Error(`This asset supports at most ${decimals} decimal places.`);
+  const amount = BigInt(whole) * (BigInt(10) ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals) || "0");
+  if (amount <= BigInt(0)) throw new Error("Amount must be greater than zero.");
+  return amount.toString(10);
 }
 
 function readableResourceError(error: unknown) {

@@ -71,6 +71,11 @@ export function borrowCapacityAssets(
   return mulDivDown(collateralValue, lltvWad, WAD);
 }
 
+export function policyMaximumDebtAssets(rawMaximumDebtAssets: bigint, healthFloorWad: bigint): bigint {
+  if (healthFloorWad < WAD) throw new RangeError("Health floor must be at least one wad.");
+  return mulDivDown(rawMaximumDebtAssets, WAD, healthFloorWad);
+}
+
 export function availableBorrowAssets(input: {
   positionBorrowShares: bigint;
   totalBorrowAssets: bigint;
@@ -117,9 +122,20 @@ export function minimumCollateralForDebt(
   oraclePrice: bigint,
   lltvWad: bigint,
 ): bigint {
+  return minimumCollateralForHealthFactor(debtAssets, oraclePrice, lltvWad, WAD);
+}
+
+export function minimumCollateralForHealthFactor(
+  debtAssets: bigint,
+  oraclePrice: bigint,
+  lltvWad: bigint,
+  healthFactorWad: bigint,
+): bigint {
   if (debtAssets === BigInt("0")) return BigInt("0");
-  if (oraclePrice === BigInt("0") || lltvWad === BigInt("0")) throw new RangeError("Oracle price and LLTV must be positive.");
-  const requiredValue = mulDivUp(debtAssets, WAD, lltvWad);
+  if (oraclePrice === BigInt("0") || lltvWad === BigInt("0") || healthFactorWad < WAD) {
+    throw new RangeError("Oracle price, LLTV, and health factor must be valid.");
+  }
+  const requiredValue = mulDivUp(debtAssets, healthFactorWad, lltvWad);
   return mulDivUp(requiredValue, ORACLE_PRICE_SCALE, oraclePrice);
 }
 

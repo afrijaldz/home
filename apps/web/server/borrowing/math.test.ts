@@ -5,6 +5,8 @@ import {
   accrueBorrowAssets,
   availableBorrowAssets,
   borrowCapacityAssets,
+  minimumCollateralForHealthFactor,
+  policyMaximumDebtAssets,
   healthFactorWad,
   liquidationPriceRaw,
   minimumCollateralForDebt,
@@ -34,6 +36,23 @@ describe("Morpho borrowing integer math", () => {
 
     expect(accrued).toBeGreaterThan(totalBorrowAssets);
     expect(accrued.toString()).toBe("1000086403732");
+  });
+
+  test.each([
+    { raw: BigInt("1000000"), floor: BigInt("1250000000000000000"), expected: BigInt("800000") },
+    { raw: BigInt("1"), floor: BigInt("1250000000000000000"), expected: BigInt("0") },
+    { raw: BigInt("3441"), floor: BigInt("1500000000000000000"), expected: BigInt("2294") },
+  ])("derives policy-adjusted capacity with downward rounding: $raw", ({ raw, floor, expected }) => {
+    expect(policyMaximumDebtAssets(raw, floor)).toBe(expected);
+  });
+
+  test("rounds required collateral up for the configured health factor", () => {
+    const debt = BigInt("1000000");
+    const price = BigInt("800000000000000000000000000000000000000");
+    const lltv = BigInt("860000000000000000");
+    const raw = minimumCollateralForHealthFactor(debt, price, lltv, BigInt("1000000000000000000"));
+    const policy = minimumCollateralForHealthFactor(debt, price, lltv, BigInt("1250000000000000000"));
+    expect(policy).toBeGreaterThan(raw);
   });
 
   test("accounts for borrow-share rounding when reporting current available capacity", () => {

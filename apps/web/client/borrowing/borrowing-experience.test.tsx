@@ -28,6 +28,7 @@ const session: VerifiedAccountSession = {
 
 function emptySnapshot(): BorrowMarketSnapshot {
   return {
+    version: "1",
     chainId: 8453,
     walletAddress: OWNER,
     market: {
@@ -38,7 +39,9 @@ function emptySnapshot(): BorrowMarketSnapshot {
       oracle: BORROW_ORACLE_ADDRESS,
       irm: BORROW_IRM_ADDRESS,
       lltvWad: BORROW_LLTV_WAD.toString(),
+      rank: 1,
     },
+    eligibility: { mode: "enabled", newRisk: true, reason: null },
     source: { provider: "Base JSON-RPC", blockNumber: "100", blockHash: BLOCK_HASH, blockTimestamp: "1788897600", fetchedAt: "2026-09-08T12:00:00.000Z" },
     state: {
       oraclePriceRaw: "800000000000000000000000000000000000000", borrowRatePerSecondWad: "1000000000",
@@ -47,8 +50,8 @@ function emptySnapshot(): BorrowMarketSnapshot {
     },
     wallet: { collateralBalanceRaw: "0", loanBalanceRaw: "0", collateralAllowanceRaw: "0", loanAllowanceRaw: "0" },
     position: {
-      collateralRaw: "0", borrowSharesRaw: "0", debtAssetsRaw: "0", borrowCapacityAssetsRaw: "0",
-      withdrawableCollateralRaw: "0", healthFactorWad: null, liquidationPriceRaw: null,
+      collateralRaw: "0", borrowSharesRaw: "0", debtAssetsRaw: "0", rawBorrowCapacityAssetsRaw: "0", borrowCapacityAssetsRaw: "0",
+      rawWithdrawableCollateralRaw: "0", withdrawableCollateralRaw: "0", healthFactorWad: null, liquidationPriceRaw: null,
     },
   };
 }
@@ -108,10 +111,10 @@ describe("BorrowExperience", () => {
     const previewButton = within(document.body).getByRole("button", { name: "Review current preview" });
     fireEvent.click(previewButton);
     expect(await within(document.body).findByRole("heading", { name: "Borrow USDC" })).toBeTruthy();
-    expect(reads).toEqual(["/api/borrow"]);
+    expect(reads).toEqual([`/api/borrow/markets/${BORROW_MARKET_ID}`]);
     expect(prepared).toEqual([{
       kind: "borrow",
-      params: { operation: "borrow", amount: "1", snapshotBlockHash: BLOCK_HASH },
+      params: { marketId: BORROW_MARKET_ID, operation: "borrow", amountBaseUnits: "1000000" },
     }]);
     expect(JSON.stringify(prepared)).not.toContain("calls");
   });
