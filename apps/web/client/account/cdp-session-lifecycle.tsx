@@ -14,7 +14,7 @@ import {
 } from "@/client/query/query-client";
 import { useAuthenticatedTransport } from "./cdp-authenticated-transport";
 import { useMoneyActionExecution } from "./cdp-money-action-execution";
-import { BaseAccountLoginError, baseLoginFailureFromConnector, invalidationMessage, writeAccountProviderHint } from "./cdp-wallet-provider-capabilities";
+import { BaseAccountLoginError, baseLoginFailureFromConnector, clearCdpRenderHint, invalidationMessage, writeAccountProviderHint } from "./cdp-wallet-provider-capabilities";
 import { dataOwnerKey, ownerSessionBoundary } from "./owner-keys";
 import { useOwnerGenerationFence } from "./owner-generation-fence";
 
@@ -118,6 +118,7 @@ export function AccountWalletSessionOwner({
   }, [fence, isSignedIn, ownerKey, provisionalSession]);
 
   const clearPrivate = useCallback(() => {
+    clearCdpRenderHint();
     validationRef.current?.abort();
     setSession(null);
     setVerification(null);

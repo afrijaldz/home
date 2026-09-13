@@ -11,6 +11,16 @@ type AccountProviderHint = AccountProvider | `pending:${AccountProvider}`;
 
 export const ACCOUNT_PROVIDER_HINT_KEY = "home:account-provider";
 
+export function clearCdpRenderHint(): void {
+  if (typeof document === "undefined") return;
+  try {
+    document.cookie = "home-cdp-live=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; SameSite=Lax" +
+      (location.protocol === "https:" ? "; Secure" : "");
+  } catch {
+    // The HttpOnly half is inert without this hint; logout also clears both halves.
+  }
+}
+
 export function hasAccountProviderHint(): boolean {
   try {
     const hint = window.sessionStorage.getItem(ACCOUNT_PROVIDER_HINT_KEY);

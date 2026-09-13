@@ -256,6 +256,30 @@ describe("owner generation fence", () => {
     }
   });
 
+  test("clears the CDP render hint synchronously with private session state", async () => {
+    let finishSignOut!: () => void;
+    const signOutPending = new Promise<void>((resolve) => { finishSignOut = resolve; });
+    const activeSdk = sdk({
+      provisionalSession: session("cdp-embedded"),
+      signOut: () => signOutPending,
+    });
+    render(
+      <AccountWalletSessionOwner sdk={activeSdk} sessionFetch={async () => Response.json(session("cdp-embedded"))}>
+        <ClientProbe />
+      </AccountWalletSessionOwner>,
+    );
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+    document.cookie = "home-cdp-live=fixture; Path=/; SameSite=Lax";
+    expect(document.cookie).toContain("home-cdp-live=fixture");
+
+    let signOutPromise!: Promise<void>;
+    act(() => { signOutPromise = currentClient().signOut(); });
+    expect(document.cookie).not.toContain("home-cdp-live");
+
+    finishSignOut();
+    await act(async () => { await signOutPromise; });
+  });
+
   test("cancels post-action freshness before an owner switch can recreate old-owner queries", async () => {
     const queryClient = getHomeQueryClient();
     let activeSession = session("cdp-embedded");
