@@ -24,6 +24,8 @@ export type UniverseEntry = {
   imageUrl?: string;
   liquidityUsd?: ExactDecimal;
   volume24Usd?: ExactDecimal;
+  /** Codex resolved this wallet contract even when market-gate fields were absent. */
+  marketDataResolved?: true;
   underlying?: Holding["underlying"];
 };
 

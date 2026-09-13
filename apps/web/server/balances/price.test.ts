@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { createCodexRawQuotesReader } from "@/server/market-data/codex/raw-quotes";
+import { BALANCES_PRICE_MAX_AGE_MS } from "@/shared/balances/types";
 import type { PriceQuote } from "@/shared/balances/quotes";
 import { createBalancesPricer } from "./price";
 import type { BalancesRead, ReadHolding } from "./types";
@@ -20,6 +22,7 @@ function holding(
     liquidity?: string;
     volume?: string;
     baseUnits?: string;
+    marketDataResolved?: true;
   } = {},
 ): ReadHolding {
   return {
@@ -36,18 +39,21 @@ function holding(
       status: "ready",
       baseUnits: options.baseUnits ?? "1000000",
     },
-    ...(sourceKind === "catalog"
-      ? {
-          liquidityUsd: {
-            atoms: options.liquidity ?? "100000",
-            scale: 0,
-          },
-          volume24Usd: {
-            atoms: options.volume ?? "10000",
-            scale: 0,
-          },
-        }
-      : {}),
+    ...(
+      sourceKind === "catalog" || options.marketDataResolved
+        ? {
+            liquidityUsd: {
+              atoms: options.liquidity ?? "100000",
+              scale: 0,
+            },
+            volume24Usd: {
+              atoms: options.volume ?? "10000",
+              scale: 0,
+            },
+          }
+        : {}
+    ),
+    ...(options.marketDataResolved ? { marketDataResolved: true as const } : {}),
   };
 }
 
@@ -204,6 +210,116 @@ describe("balances pricing", () => {
       status: "unpriced",
       reason: "below-market-gate",
     });
+  });
+
+  test("prices enriched wallet rows and applies the same market gate", async () => {
+    const admitted = holding(
+      "0x4444444444444444444444444444444444444444",
+      "wallet:admitted",
+      "wallet",
+      { marketDataResolved: true },
+    );
+    const gated = holding(
+      "0x5555555555555555555555555555555555555555",
+      "wallet:gated",
+      "wallet",
+      { marketDataResolved: true, liquidity: "99999" },
+    );
+    const batches: string[][] = [];
+    const price = createBalancesPricer({
+      readPrices: async (inputs) => {
+        batches.push(inputs.map(({ assetKey }) => assetKey));
+        return inputs.map((input) => quote(input.assetKey, "fresh"));
+      },
+      readExchangeRates: async () => rates(),
+    });
+
+    const result = await price({ ...read, holdings: [admitted, gated] }, "US");
+    expect(batches).toEqual([[admitted.key, gated.key]]);
+    expect(result[0]?.value).toMatchObject({
+      status: "priced",
+      currency: "USD",
+    });
+    expect(result[1]?.value).toEqual({
+      status: "unpriced",
+      reason: "below-market-gate",
+    });
+  });
+
+  test.each([
+    ["3 hours", 3 * 60 * 60 * 1_000, "priced"],
+    ["30 hours", 30 * 60 * 60 * 1_000, "unpriced"],
+  ] as const)("uses the 24-hour display freshness bound at %s", async (_name, ageMs, expected) => {
+    const now = new Date("2026-09-13T12:00:00.000Z");
+    const idrx = holding(
+      "0x6666666666666666666666666666666666666666",
+      "idrx",
+      "registry",
+      { cash: "USD" },
+    );
+    idrx.cashCurrency = "IDR";
+    const price = createBalancesPricer({
+      readPrices: async (inputs, options) => createCodexRawQuotesReader({
+        apiKey: "fixture-key",
+        inputs,
+        now: () => now,
+        freshnessMs: options?.freshnessMs,
+        fetchImpl: async () => Response.json({
+          data: {
+            getTokenPrices: [{
+              address: idrx.contractAddress,
+              networkId: 8453,
+              priceUsd: "0.000061",
+              timestamp: String((now.getTime() - ageMs) / 1_000),
+            }],
+          },
+        }),
+      })(),
+      readExchangeRates: async () => {
+        const baseRates = rates() as unknown as {
+          fetchedAt: string;
+          quotes: Record<string, unknown>[];
+          nativeEthQuote: Record<string, unknown>;
+        };
+        return {
+          ...baseRates,
+          quotes: [
+            ...baseRates.quotes,
+            {
+              baseCurrency: "USD",
+              quoteCurrency: "IDR",
+              quoteUnitsPerUsd: { atoms: "16393", scale: 0 },
+              sourceValue: "16393",
+              status: "fresh",
+              source,
+            },
+          ],
+        } as never;
+      },
+    });
+
+    const result = await price({ ...read, holdings: [idrx] }, "ID");
+    expect(BALANCES_PRICE_MAX_AGE_MS).toBe(24 * 60 * 60 * 1_000);
+    if (expected === "priced") {
+      expect(result[0]?.value).toMatchObject({
+        status: "priced",
+        currency: "IDR",
+        asOf: new Date(now.getTime() - ageMs).toISOString(),
+      });
+      expect(result[0]?.cashValue).toMatchObject({
+        status: "priced",
+        currency: "IDR",
+      });
+    } else {
+      expect(result[0]?.value).toEqual({
+        status: "unpriced",
+        reason: "price-stale",
+      });
+      expect(result[0]?.cashValue).toEqual({
+        status: "unpriced",
+        reason: "price-stale",
+      });
+    }
   });
 
   test("uses one identical full registry batch across wallet balances", async () => {

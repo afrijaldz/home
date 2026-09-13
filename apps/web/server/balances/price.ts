@@ -10,11 +10,12 @@ import {
   type CodexRawQuoteInput,
 } from "@/server/market-data/codex/raw-quotes";
 import { getCoinbaseExchangeRates } from "./fx-coinbase";
-import type {
-  ExactDecimal,
-  Holding,
-  HoldingCashValue,
-  HoldingValue,
+import {
+  BALANCES_PRICE_MAX_AGE_MS,
+  type ExactDecimal,
+  type Holding,
+  type HoldingCashValue,
+  type HoldingValue,
 } from "@/shared/balances/types";
 import {
   baseUnitsToFraction,
@@ -47,7 +48,10 @@ const ZERO: Fraction = {
 
 type ExchangeRates = Awaited<ReturnType<typeof getCoinbaseExchangeRates>>;
 type Dependencies = {
-  readPrices?: (inputs: readonly CodexRawQuoteInput[]) => Promise<PriceQuote[]>;
+  readPrices?: (
+    inputs: readonly CodexRawQuoteInput[],
+    options?: { freshnessMs?: number },
+  ) => Promise<PriceQuote[]>;
   readExchangeRates?: () => Promise<ExchangeRates>;
 };
 
@@ -68,10 +72,11 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
         )
         .map(pricingInput),
     );
-    const catalogInputs = uniqueInputs(
+    const discoveredInputs = uniqueInputs(
       read.holdings
         .filter((holding) =>
-          holding.source === "catalog" && positivePricingAmount(holding),
+          (holding.source === "catalog" || holding.marketDataResolved === true) &&
+          positivePricingAmount(holding),
         )
         .map(pricingInput),
     );
@@ -82,12 +87,12 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
     }
     for (
       let index = 0;
-      index < catalogInputs.length;
+      index < discoveredInputs.length;
       index += PRICE_BATCH_SIZE
     ) {
       priceBatches.push(await readPriceBatch(
         readPrices,
-        catalogInputs.slice(index, index + PRICE_BATCH_SIZE),
+        discoveredInputs.slice(index, index + PRICE_BATCH_SIZE),
       ));
     }
 
@@ -154,7 +159,7 @@ function priceHolding(
         : {}),
     };
   }
-  if (holding.source === "wallet") {
+  if (holding.source === "wallet" && holding.marketDataResolved !== true) {
     return {
       ...base,
       value: {
@@ -256,7 +261,7 @@ function valueFraction(
     return failed("price-unavailable");
   }
   if (
-    holding.source === "catalog" &&
+    (holding.source === "catalog" || holding.source === "wallet") &&
     (
       !meetsGate(holding.liquidityUsd, LIQUIDITY_GATE) ||
       !meetsGate(holding.volume24Usd, VOLUME_GATE)
@@ -361,7 +366,9 @@ async function readPriceBatch(
   inputs: readonly CodexRawQuoteInput[],
 ): Promise<PriceQuote[]> {
   try {
-    return await readPrices(inputs);
+    return await readPrices(inputs, {
+      freshnessMs: BALANCES_PRICE_MAX_AGE_MS,
+    });
   } catch {
     return unavailablePrices(inputs);
   }

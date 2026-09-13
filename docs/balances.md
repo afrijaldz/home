@@ -56,7 +56,8 @@ After enumeration and the pinned registry read finish concurrently, `server/bala
 
 - Registry contracts found in CDP are ignored; their quantity remains the pinned registry quantity.
 - A positive enumerated contract in the cached Codex 512 catalog becomes a `catalog` holding. Catalog `name`, `symbol`, `decimals`, image, liquidity, and 24 h volume win; the CDP amount supplies the display quantity. If CDP supplies decimals and they disagree with Codex, the row is skipped and coverage becomes incomplete.
-- A positive contract outside registry and catalog becomes a `wallet` holding only when CDP supplied valid `name`, `symbol`, and `decimals`. It has id `wallet:<lowercase address>`, no image, and no liquidity/volume evidence. Missing or invalid optional metadata skips the row silently.
+- A positive contract outside registry and catalog is looked up on Codex by contract address in batches of 100 (global 60 s, 2,048-address LRU). Codex name, symbol, image, liquidity, and 24 h volume win; a CDP/Codex decimals disagreement skips the row and makes coverage incomplete. Unknown or failed lookups remain quantity-only `wallet` rows with valid CDP metadata.
+- Registry non-cash ERC-20s receive `imageUrl` from the one-hour configured-asset icon resolver; icon failure is ignored. Cash, ETH, and vault shares never receive an image.
 - Zero rows are skipped and contracts are deduped by lowercase address.
 
 The Codex catalog reader remains the three-page, 512-entry, 60 s shared cache. It resolves membership and presentation metadata; it is not part of the chain quantity read.
@@ -68,7 +69,7 @@ The Codex catalog reader remains the three-page, 512-entry, 60 s shared cache. I
 - The full registry ERC-20/vault-underlying input set remains one stable batch on every pricing pass.
 - Positive `catalog` rows are priced in batches of 25 and retain the ≥ $100k liquidity, ≥ $10k 24 h volume market gate for the total.
 - A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
-- `wallet` rows that Codex recognizes by contract address (decision 8) are priced and gated like catalog rows; rows Codex does not know return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
+- Codex-enriched `wallet` rows share the catalog 25-token price batches and market gate; unknown quantity-only rows return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
 - ETH and FX continue to use Coinbase exchange rates. Cash rows still get `cashValue` in their own denomination.
 - `total.status` is determined from registry rows only. Gated-in catalog values add to the amount without changing status.
 
