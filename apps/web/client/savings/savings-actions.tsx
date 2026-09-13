@@ -73,7 +73,6 @@ export function SavingsMoneyDialog({
       ? "Deposit"
       : "Withdraw";
 
-
   function changeAmount(value: string, source: MoneyAmountChangeSource) {
     setAmountChangeSource(source);
     setAmount(value);
