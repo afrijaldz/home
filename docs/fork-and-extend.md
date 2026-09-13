@@ -22,6 +22,8 @@ Country selection changes presentation only. Asset identity is chain ID plus add
 
 Actions require `DATABASE_URL` and use the disposable `actions` schema applied by `bun run db:migrate`. Their contract is [Actions](actions.md) under [Architecture](architecture.md): server-authored calldata, verified scope, one owner-generation fence, and provider/chain-derived status. Do not point a fork at another operator’s database or provider project.
 
+For a local database, run `bun run db:up` before setting `DATABASE_URL` and applying migrations.
+
 For Vercel settings, see [Vercel deploy](vercel-deploy.md). For CDP configuration, see [CDP setup](cdp-setup.md). For funding adapters, see the [issuer integration guide](integrations/README.md).
 
 ## Before publishing

@@ -1,0 +1,23 @@
+# Local development database. Host port 54320 avoids a system PostgreSQL on
+# 5432. The database is deliberately not named `home`: Bun.SQL treats a
+# connection-string path that exists on disk (`/home` on macOS) as a unix
+# socket and fails to connect.
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: home
+      POSTGRES_PASSWORD: home
+      POSTGRES_DB: home_local
+    ports:
+      - "54320:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U home -d home_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
