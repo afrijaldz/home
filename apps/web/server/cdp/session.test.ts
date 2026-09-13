@@ -215,7 +215,9 @@ describe("GET /api/session handler", () => {
       const enabled = makeHandler(async () => ({}), undefined, {
         homeSessionSecret: SECRET,
       });
-      const disabled = makeHandler(async () => ({}));
+      const disabled = makeHandler(async () => ({}), undefined, {
+        baseAccountEnabled: false,
+      });
 
       await expectPrivateJson(
         await enabled(makeRequest(undefined, "base-account", cookieValue)),
@@ -234,6 +236,33 @@ describe("GET /api/session handler", () => {
     } finally {
       restoreEnvironment("NEXT_PUBLIC_CDP_PROJECT_ID", previousProjectId);
     }
+  });
+
+  test("rejects simultaneous token and valid native session authentication", async () => {
+    let calls = 0;
+    const handler = makeHandler(async () => {
+      calls += 1;
+      return embeddedProfile();
+    }, undefined, {
+      baseAccountEnabled: true,
+      homeSessionSecret: SECRET,
+    });
+
+    await expectPrivateJson(
+      await handler(makeRequest(
+        "bEaReR\tverified.token.value",
+        "cdp-embedded",
+        nativeSessionCookie(),
+      )),
+      400,
+      {
+        error: {
+          code: "AMBIGUOUS_AUTHENTICATION",
+          message: "Use exactly one account authentication provider.",
+        },
+      },
+    );
+    expect(calls).toBe(0);
   });
 
   test("issues render cookies only for Bearer-validated smart accounts", async () => {
