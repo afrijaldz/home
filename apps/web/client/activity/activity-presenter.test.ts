@@ -122,8 +122,8 @@ describe("presentActivityTransferRow", () => {
     });
     expect(details.rows).toContainEqual({
       label: "Token contract",
-      value: "0x4444…444444",
-      title: tokenAddress,
+      value: tokenAddress,
+      display: "0x4444…444444",
     });
   });
 
@@ -132,12 +132,12 @@ describe("presentActivityTransferRow", () => {
 
     expect(details.title).toBe("Received USDC");
     expect(details.rows).toContainEqual({ label: "Amount", value: "+1.000001 USDC" });
-    expect(details.rows).toContainEqual({ label: "From", value: "0x2222…222222", title: OTHER });
-    expect(details.rows).toContainEqual({ label: "To", value: "0x1111…111111", title: WALLET });
+    expect(details.rows).toContainEqual({ label: "From", value: OTHER, display: "0x2222…222222" });
+    expect(details.rows).toContainEqual({ label: "To", value: WALLET, display: "0x1111…111111" });
     expect(details.rows).toContainEqual({
       label: "Token contract",
-      value: "0x8335…A02913",
-      title: usdc.tokenAddress,
+      value: usdc.tokenAddress,
+      display: "0x8335…A02913",
     });
     expect(details.rows).toContainEqual({ label: "Status", value: "Confirmed" });
     expect(details.rows).toContainEqual({ label: "Block", value: "20" });

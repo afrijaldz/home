@@ -35,6 +35,8 @@ export type HomeAssetBalancesPresentation = {
   /** Whether the displayed total covers every supported holding that was read. */
   totalStatus?: "complete" | "partial" | "unavailable";
   statusLabel?: string;
+  /** Snapshot-derived context for the Home hero; omitted when there are no rows. */
+  metadataLabel?: string;
   items: readonly HomeAssetBalanceItem[];
   revalidating?: true;
   /** Current-snapshot membership hints; never written to the presentation cache. */
@@ -78,6 +80,20 @@ export function presentPortfolioValuation(
     snapshot.total.status === "unavailable-no-quote-currency";
   const totalUnavailable = snapshot.total.status === "unavailable";
   const totalPartial = snapshot.total.status === "partial";
+  const items = orderHomeBalanceItems(
+    [
+      ...snapshot.cashBuckets.map((bucket) =>
+        presentCashBucket(
+          bucket,
+          snapshot.nativeCashValuations,
+          snapshot.selectedRegion,
+        ),
+      ),
+      ...presentAssetRows(snapshot),
+      ...presentRecognizedRows(snapshot),
+    ],
+    snapshot,
+  );
 
   return {
     status: "ready",
@@ -101,20 +117,9 @@ export function presentPortfolioValuation(
       : totalUnavailable
         ? "Balance unavailable"
         : undefined,
-    items: orderHomeBalanceItems(
-      [
-        ...snapshot.cashBuckets.map((bucket) =>
-          presentCashBucket(
-            bucket,
-            snapshot.nativeCashValuations,
-            snapshot.selectedRegion,
-          ),
-        ),
-        ...presentAssetRows(snapshot),
-        ...presentRecognizedRows(snapshot),
-      ],
-      snapshot,
-    ),
+    metadataLabel:
+      items.length > 0 ? `${items.length} ${items.length === 1 ? "asset" : "assets"}` : undefined,
+    items,
     ...presentNonreadyItemIds(snapshot),
   };
 }

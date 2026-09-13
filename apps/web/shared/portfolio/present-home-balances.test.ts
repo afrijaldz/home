@@ -337,6 +337,7 @@ describe("presentPortfolioValuation", () => {
       error: null,
     });
 
+    expect(presented.metadataLabel).toBe("3 assets");
     expect(presented.items.filter((item) => item.group === "cash")).toHaveLength(2);
     expect(presented.items.filter((item) => item.group === "asset")).toEqual([
       {

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartNoAxesCombined, House } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import {
   isHomeNestedPanelId,
@@ -9,7 +10,7 @@ import {
   type ShellPanelId,
 } from "@/config/navigation";
 
- type PrimaryNavigationProps = {
+type PrimaryNavigationProps = {
   activeNavigation: ShellPanelId;
   onNavigate: (id: NavigationId) => void;
 };
@@ -23,9 +24,11 @@ export function PrimaryNavigation({
   activeNavigation,
   onNavigate,
 }: PrimaryNavigationProps) {
+  const reducedMotion = useReducedMotion();
+
   return (
     <nav
-      className="order-2 grid w-full shrink-0 grid-cols-2 border-t bg-background pb-[env(safe-area-inset-bottom)] sm:order-1 sm:mx-auto sm:max-w-2xl sm:border-x sm:border-b sm:pb-0"
+      className="order-2 grid h-14 w-full shrink-0 grid-cols-2 border-t bg-background pb-[env(safe-area-inset-bottom)] sm:order-1 sm:mx-auto sm:max-w-2xl sm:border-x sm:border-b sm:pb-0"
       aria-label="Main navigation"
     >
       {navigationItems.map((item) => {
@@ -40,13 +43,21 @@ export function PrimaryNavigation({
             id={`${item.id}-nav`}
             variant="ghost"
             size="lg"
-            className="h-12 min-w-0 rounded-none text-muted-foreground aria-[current=page]:bg-muted aria-[current=page]:text-foreground"
+            className="relative h-full min-h-11 min-w-0 rounded-none text-muted-foreground transition-colors aria-[current=page]:text-foreground motion-reduce:transition-none"
             onClick={() => onNavigate(item.id)}
             aria-current={isActive ? "page" : undefined}
             aria-controls="navigation-panel"
           >
-            <Icon className="size-5" aria-hidden="true" />
-            <span className="truncate">{item.label}</span>
+            {isActive ? (
+              <motion.span
+                layoutId="primary-navigation-indicator"
+                className="absolute inset-x-6 bottom-1 h-0.5 rounded-full bg-primary"
+                transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 40 }}
+                aria-hidden="true"
+              />
+            ) : null}
+            <Icon className="size-5 transition-transform group-active/button:scale-95 motion-reduce:transition-none" aria-hidden="true" />
+            <span className="truncate transition-colors motion-reduce:transition-none">{item.label}</span>
           </Button>
         );
       })}

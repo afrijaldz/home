@@ -2,6 +2,10 @@
 
 import { MoneyTicker } from "@/components/money-ticker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  presentPortfolioAssetMark,
+  type AssetMarkResolution,
+} from "@/client/asset-mark/presentation";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode, useMemo } from "react";
 import { LoaderCircle } from "lucide-react";
 import { AddressField } from "@/components/address";
@@ -41,6 +45,7 @@ export function SendDialog({
   open,
   address,
   availableAssets,
+  assetMarkResolution,
   prepareMoneyAction,
   resumeMoneyAction,
   executeMoneyAction,
@@ -55,6 +60,7 @@ export function SendDialog({
   open: boolean;
   address: `0x${string}` | null;
   availableAssets?: readonly TransferAssetAvailability[];
+  assetMarkResolution?: AssetMarkResolution;
   prepareMoneyAction: AccountWalletClient["prepareMoneyAction"];
   resumeMoneyAction: AccountWalletClient["resumeMoneyAction"];
   executeMoneyAction: AccountWalletClient["executeMoneyAction"];
@@ -99,8 +105,17 @@ export function SendDialog({
       id: asset.id,
       label: asset.symbol,
       description: asset.name,
+      mark: presentPortfolioAssetMark(
+        {
+          assetKey: asset.assetKey,
+          name: asset.name,
+          symbol: asset.symbol,
+          currency: asset.cashCurrency,
+        },
+        assetMarkResolution,
+      ),
     })) ?? [],
-    [availableAssets],
+    [assetMarkResolution, availableAssets],
   );
 
   useEffect(() => {
@@ -196,10 +211,9 @@ export function SendDialog({
           <MoneyAmountDisplay amount={amount} amountChangeSource={amountChangeSource} onAmountChange={changeAmount} availableLabel={selectedAvailability ? `${selectedAvailability.balanceLabel} available` : undefined} assetId={activeAssetId ?? undefined} assetLabel={selectedAsset?.symbol} assetCurrency={selectedAsset?.cashCurrency} assetOptions={assetOptions} onAssetChange={(next) => { setAssetId(next); changeAmount("", "programmatic"); }} chipSet={pricing.status === "priced" ? "quick-local" : "none"} pricing={pricing} nativeSymbol={selectedAsset?.symbol ?? ""} />
           {selectedAsset ? <MoneyNumpad value={amount} maxDecimals={selectedAsset.decimals} onChange={changeAmount} /> : <StatusMessage>No catalog balance is available to send.</StatusMessage>}
         </> : null}
-        {step === "address" ? <div className="space-y-2">
-          <AddressField id="send-recipient" label="To" value={recipient} onChange={setRecipient} aria-describedby="send-recipient-hint" />
-          <p id="send-recipient-hint" className="text-sm text-muted-foreground">Base address</p>
-        </div> : null}
+        {step === "address" ? (
+          <AddressField id="send-recipient" label="To" value={recipient} onChange={setRecipient} />
+        ) : null}
         {request && requestAsset && (step === "confirm" || step === "pending" || step === "error") ? <>
           <MoneyConfirmSummary amount={confirmAmount} lead={`You're sending ${requestAsset.symbol}`} rows={[
             { label: "To", value: <CopyableValue value={request.recipient} presentation="full" valueKind="address" className="sm:justify-end" />, fullValue: true },

@@ -44,6 +44,28 @@ describe("CopyableValue", () => {
     expect(view.container.querySelector('[aria-live="polite"]')?.textContent).toBe("Copied");
   });
 
+  test("copies the full value from the single-line full presentation when its display is truncated", async () => {
+    let copied = "";
+    withClipboard(async (value: string) => {
+      copied = value;
+    });
+    const view = render(
+      <CopyableValue
+        value={VALUE}
+        display={DISPLAY}
+        presentation="full"
+        valueKind="address"
+      />,
+    );
+
+    const control = view.getByRole("button", { name: `Copy ${DISPLAY}` });
+    expect(control.textContent).toContain(DISPLAY);
+    expect(control.querySelector("span")?.className).toContain("whitespace-nowrap");
+
+    fireEvent.click(control);
+    await waitFor(() => expect(copied).toBe(VALUE));
+  });
+
   test("exposes the selectable full value and a truthful error when clipboard is unavailable", async () => {
     const view = render(<CopyableValue value={VALUE} display={DISPLAY} valueKind="address" />);
     fireEvent.click(view.getByRole("button", { name: `Copy ${DISPLAY}` }));

@@ -474,6 +474,7 @@ export function HomeShell({
           preferenceMessage={preferenceMessage}
           isPreferenceReady={isPreferenceReady}
           accountAddress={account.session?.smartAccount?.address ?? null}
+          accountOwnerKey={account.ownerKey}
           selectRegion={selectRegion}
           signOut={signOut}
           paintedAssetBalances={paintedAssetBalances}

@@ -50,8 +50,13 @@ export function ShellHeader({
             backLabel={nestedChromeBackLabel}
             onBack={onNestedChromeBack}
           />
-        ) : routeMode === "dashboard" && activeNavigation === "invest" ? (
-          <h1 className="text-base font-semibold">Invest</h1>
+        ) : routeMode === "dashboard" ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <HomeMark onClick={() => { if (isVerified) onHome(); }} />
+            <h1 className="truncate text-base font-semibold">
+              {activeNavigation === "invest" ? "Invest" : "Home"}
+            </h1>
+          </div>
         ) : (
           <HomeMark onClick={() => { if (isVerified) onHome(); }} />
         )}

@@ -101,7 +101,8 @@ export function HomePanel({
         aria-label={heroLabel}
         aria-busy={isLoading || isRevalidating || undefined}
       >
-        <CardContent className="space-y-2 p-5 sm:p-6">
+        <CardContent className="space-y-2 px-4 py-5 sm:px-5 sm:py-6">
+          <p className="text-sm text-muted-foreground">Total balance</p>
           {isLoading ? (
             <Skeleton className="h-10 w-48" data-shimmer="hero" />
           ) : (
@@ -109,10 +110,15 @@ export function HomePanel({
               <MoneyTicker value={assetBalances?.displayTotal ?? "—"} />
             </div>
           )}
-          {showBalanceStatus ? (
-            <p className="text-sm text-muted-foreground" data-total-status={assetBalances?.totalStatus}>
-              {balanceStatusLabel}
-            </p>
+          {assetBalances?.metadataLabel || showBalanceStatus ? (
+            <div className="flex w-full items-center justify-between gap-3 text-sm text-muted-foreground">
+              {assetBalances?.metadataLabel ? <p>{assetBalances.metadataLabel}</p> : <span />}
+              {showBalanceStatus ? (
+                <p className="text-right" data-total-status={assetBalances?.totalStatus}>
+                  {balanceStatusLabel}
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {isLoading || isRevalidating ? <span className="sr-only">Updating…</span> : null}
         </CardContent>
@@ -128,6 +134,7 @@ export function HomePanel({
           initialOpen={initialSendFlow}
           initialActionId={initialSendActionId}
           availableAssets={deriveSendAvailability(balanceItems)}
+          assetMarkResolution={assetMarkResolution}
         />
       </div>
 
