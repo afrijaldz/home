@@ -7,7 +7,7 @@ import type {
   QuoteIntent,
 } from "@/shared/funding/provider-contract";
 import { MemoryFundingOrderStore } from "./store";
-import { FundingCore } from "./service";
+import { FundingCore, resolveClientIp, isPrivateIp } from "./service";
 
 const session: VerifiedAccountSession = { user: { subject: "user" }, accountProvider: "base-account", smartAccount: { address: "0x1111111111111111111111111111111111111111", chainId: 8453 } };
 const manifest = { id: "fixture", displayName: "Fixture", docsUrl: "https://example.com", bindings: [{ region: "ID", assetId: "base:idrx", paymentMethods: [{ id: "bank", label: "Bank" }], env: ["FIXTURE_KEY"] }], apiOrigins: ["https://example.com"], reference: "home" } as const satisfies FundingProviderManifest;
@@ -356,3 +356,23 @@ function coreWithInstruction(
     verifyReceipt: async () => null,
   });
 }
+
+describe("resolveClientIp", () => {
+  const headers = (ip?: string) => new Headers(ip ? { "x-forwarded-for": `${ip}, 10.0.0.1` } : {});
+  test("returns the first forwarded hop and ignores the sandbox override outside sandbox mode", () => {
+    expect(resolveClientIp(headers("203.0.113.9"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, false)).toBe("203.0.113.9");
+    expect(resolveClientIp(headers("127.0.0.1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, false)).toBe("127.0.0.1");
+    expect(resolveClientIp(headers(), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, false)).toBeUndefined();
+  });
+  test("substitutes the sandbox override only for a missing or private forwarded IP", () => {
+    expect(resolveClientIp(headers("127.0.0.1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("198.51.100.7");
+    expect(resolveClientIp(headers("::1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("198.51.100.7");
+    expect(resolveClientIp(headers(), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("198.51.100.7");
+    expect(resolveClientIp(headers("203.0.113.9"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("203.0.113.9");
+    expect(resolveClientIp(headers("127.0.0.1"), {}, true)).toBe("127.0.0.1");
+  });
+  test("classifies private ranges", () => {
+    for (const ip of ["127.0.0.1", "10.1.2.3", "192.168.0.5", "172.16.0.1", "172.31.255.1", "169.254.1.1", "::1", "::ffff:127.0.0.1", "fd12::1", "fe80::1"]) expect(isPrivateIp(ip), ip).toBe(true);
+    for (const ip of ["203.0.113.9", "172.32.0.1", "8.8.8.8", "2001:db8::1"]) expect(isPrivateIp(ip), ip).toBe(false);
+  });
+});

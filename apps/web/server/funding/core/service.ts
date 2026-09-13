@@ -135,7 +135,7 @@ export class FundingCore {
     });
     if (!reserved.created) return publicOrder(reserved.order);
     const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: claims.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation, sandbox: claims.sandbox });
-    const result = await provider.createOrder({ homeOrderId: id, destination: session.smartAccount.address, fiatAmount: claims.fiatAmount, quote: claims.quote, customerRef: claims.customerRef ?? undefined, clientIp: clientIpFromHeaders(headers), returnUrl: `${returnOrigin}/fund?return=funding` }, ctx);
+    const result = await provider.createOrder({ homeOrderId: id, destination: session.smartAccount.address, fiatAmount: claims.fiatAmount, quote: claims.quote, customerRef: claims.customerRef ?? undefined, clientIp: resolveClientIp(headers, this.env, claims.sandbox), returnUrl: `${returnOrigin}/fund?return=funding` }, ctx);
     if (result.outcome === "ambiguous") return publicOrder(await this.deps.store.markDispatchAmbiguous(id, reserved.order.version, this.now().toISOString()));
     if (result.outcome === "rejected") {
       const rejected = await this.deps.store.applyObservation(id, { state: "failed", providerStatus: result.message, expectedVersion: reserved.order.version, updatedAt: this.now().toISOString() });
@@ -301,4 +301,16 @@ function clientIpFromHeaders(headers: Headers | undefined): string | undefined {
   if (forwarded) return forwarded;
   return headers?.get("x-real-ip")?.trim() || undefined;
 }
+// Providers that need the end user's public IP reject loopback and private
+// ranges. A local sandbox run has only those, so sandbox mode alone may
+// substitute FUNDING_SANDBOX_CLIENT_IP; production never reads it.
+export function resolveClientIp(headers: Headers | undefined, env: Environment, sandbox: boolean): string | undefined {
+  const observed = clientIpFromHeaders(headers);
+  if (!sandbox) return observed;
+  const override = env.FUNDING_SANDBOX_CLIENT_IP?.trim();
+  if (override && (!observed || isPrivateIp(observed))) return override;
+  return observed;
+}
+const PRIVATE_IP = /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|0\.0\.0\.0$|::1$|::ffff:127\.|fc|fd|fe80:)/i;
+export function isPrivateIp(value: string): boolean { return PRIVATE_IP.test(value.trim()); }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
