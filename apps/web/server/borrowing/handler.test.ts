@@ -3,6 +3,7 @@ import { ACCOUNT_PROVIDER_HEADER, type VerifiedAccountSession } from "@/shared/a
 import { DEFAULT_BORROW_MARKET } from "@/shared/borrowing/config";
 import type { BorrowMarketSnapshot } from "@/shared/borrowing/contract";
 import { createBorrowHandler, createBorrowMarketHandler } from "./handler";
+import { setObservabilityLogWriterForTests } from "@/server/observability/log";
 import type { BorrowRpcReader } from "./rpc";
 
 const OWNER = "0x1111111111111111111111111111111111111111" as const;
@@ -35,15 +36,33 @@ describe("borrow API handlers", () => {
     expect(value.positions).toHaveLength(1);
   });
 
-  test("represents an RPC failure as unavailable rather than zero", async () => {
-    const handler = createBorrowHandler({ authorize: async () => Response.json(session()), rpc: rpc(async () => { throw new Error("offline"); }) });
-    const response = await handler(request());
-    const value = await response.json();
-    expect(response.status).toBe(200);
-    expect(value.discovery.status).toBe("partial");
-    expect(value.opportunities[0].availability).toMatchObject({ status: "unavailable", source: null });
-    expect(value.positions).toEqual([]);
-    expect(JSON.stringify(value.opportunities[0])).not.toContain("collateralRaw");
+  test("represents an RPC failure as unavailable and emits redacted bounded observability", async () => {
+    const lines: string[] = [];
+    setObservabilityLogWriterForTests((line) => { lines.push(line); });
+    try {
+      const handler = createBorrowHandler({ authorize: async () => Response.json(session()), rpc: rpc(async () => { throw new Error("offline"); }) });
+      const response = await handler(request());
+      const value = await response.json();
+      expect(response.status).toBe(200);
+      expect(value.discovery.status).toBe("partial");
+      expect(value.opportunities[0].availability).toMatchObject({ status: "unavailable", source: null });
+      expect(value.positions).toEqual([]);
+      expect(JSON.stringify(value.opportunities[0])).not.toContain("collateralRaw");
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0])).toMatchObject({
+        kind: "borrow-overview",
+        route: "/api/borrow",
+        code: "BORROW_MARKET_READ_UNAVAILABLE",
+        outcome: "unavailable",
+        provider: "base-rpc",
+      });
+      expect(lines[0]).not.toContain(OWNER);
+      expect(lines[0]).not.toContain(market.marketId);
+      expect(lines[0]).not.toContain("amount");
+      expect(lines[0]).not.toContain("calldata");
+    } finally {
+      setObservabilityLogWriterForTests();
+    }
   });
 
   test("returns versioned detail only for a configured market", async () => {

@@ -19,12 +19,14 @@ function words(...values: string[]) { return `0x${values.join("")}`; }
 function fixture(options: { wrongLltv?: boolean; market?: BorrowMarketRef } = {}) {
   const configured = options.market ?? DEFAULT_BORROW_MARKET;
   const requests: unknown[] = [];
-  const totalSupplyAssets = BigInt("2000000000");
+  const totalSupplyAssets = BigInt("100000000000");
   const totalBorrowAssets = BigInt("500000000");
   const totalBorrowShares = BigInt("500000000");
   const borrowShares = BigInt("100000000");
-  const collateral = BigInt("1000000");
-  const oraclePrice = BigInt("80000") * ORACLE_PRICE_SCALE * BigInt("1000000") / BigInt("100000000");
+  const collateral = BigInt(10) ** BigInt(configured.collateralToken.decimals);
+  const oraclePrice = BigInt("80000") * ORACLE_PRICE_SCALE *
+    (BigInt(10) ** BigInt(configured.loanToken.decimals)) /
+    (BigInt(10) ** BigInt(configured.collateralToken.decimals));
 
   const respond = (request: { id: number; method: string }) => {
     if (request.id === 1) return { jsonrpc: "2.0", id: 1, result: "0x2105" };
@@ -93,14 +95,18 @@ describe("Base Morpho borrowing RPC", () => {
     const generic = {
       ...DEFAULT_BORROW_MARKET,
       marketId: `0x${"12".repeat(32)}` as const,
-      loanToken: { ...DEFAULT_BORROW_MARKET.loanToken, id: "eip155:8453/erc20:0x3333333333333333333333333333333333333333" as const, address: "0x3333333333333333333333333333333333333333" as const, symbol: "LOAN", decimals: 18 },
-      collateralToken: { ...DEFAULT_BORROW_MARKET.collateralToken, id: "eip155:8453/erc20:0x4444444444444444444444444444444444444444" as const, address: "0x4444444444444444444444444444444444444444" as const, symbol: "COLL", decimals: 2 },
+      loanToken: { ...DEFAULT_BORROW_MARKET.loanToken, id: "eip155:8453/erc20:0x3333333333333333333333333333333333333333" as const, address: "0x3333333333333333333333333333333333333333" as const, symbol: "LOAN", decimals: 6 },
+      collateralToken: { ...DEFAULT_BORROW_MARKET.collateralToken, id: "eip155:8453/erc20:0x4444444444444444444444444444444444444444" as const, address: "0x4444444444444444444444444444444444444444" as const, symbol: "COLL", decimals: 18 },
       lltvWad: BigInt("700000000000000000"),
       rank: 2,
     } satisfies BorrowMarketRef;
     const source = fixture({ market: generic });
     const snapshot = await createBorrowRpcReader({ fetchImpl: source.fetchImpl, rpcUrl: "https://rpc.example.test" }).readSnapshot(OWNER, generic);
-    expect(snapshot.market).toMatchObject({ id: generic.marketId, rank: 2, loanToken: { symbol: "LOAN", decimals: 18 }, collateralToken: { symbol: "COLL", decimals: 2 } });
+    expect(snapshot.market).toMatchObject({ id: generic.marketId, rank: 2, loanToken: { symbol: "LOAN", decimals: 6 }, collateralToken: { symbol: "COLL", decimals: 18 } });
+    const remainingCollateral = BigInt(snapshot.position.collateralRaw) - BigInt(snapshot.position.withdrawableCollateralRaw);
+    const remainingMaximumDebt = borrowCapacityAssets(remainingCollateral, BigInt(snapshot.state.oraclePriceRaw), generic.lltvWad);
+    expect(remainingMaximumDebt * BigInt("1000000000000000000"))
+      .toBeGreaterThanOrEqual(BigInt(snapshot.position.debtAssetsRaw) * BigInt("1250000000000000000"));
   });
 
   test("encodes the documented Coinbase executeBatch tuple array exactly", () => {

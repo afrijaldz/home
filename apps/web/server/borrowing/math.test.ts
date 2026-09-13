@@ -46,13 +46,25 @@ describe("Morpho borrowing integer math", () => {
     expect(policyMaximumDebtAssets(raw, floor)).toBe(expected);
   });
 
-  test("rounds required collateral up for the configured health factor", () => {
-    const debt = BigInt("1000000");
-    const price = BigInt("800000000000000000000000000000000000000");
-    const lltv = BigInt("860000000000000000");
-    const raw = minimumCollateralForHealthFactor(debt, price, lltv, BigInt("1000000000000000000"));
-    const policy = minimumCollateralForHealthFactor(debt, price, lltv, BigInt("1250000000000000000"));
-    expect(policy).toBeGreaterThan(raw);
+  test.each([
+    {
+      name: "8-decimal cbBTC collateral",
+      debt: BigInt("1000000"),
+      price: BigInt("800000000000000000000000000000000000000"),
+      lltv: BigInt("860000000000000000"),
+    },
+    {
+      name: "18-decimal collateral at the nested-floor boundary",
+      debt: BigInt("1"),
+      price: BigInt("1000000000000000000000000"),
+      lltv: BigInt("700000000000000000"),
+    },
+  ])("advertises only collateral boundaries that satisfy the exact 1.25 check: $name", ({ debt, price, lltv }) => {
+    const required = minimumCollateralForHealthFactor(debt, price, lltv, BigInt("1250000000000000000"));
+    const maximumDebt = borrowCapacityAssets(required, price, lltv);
+    expect(healthFactorWad(maximumDebt, debt)).toBeGreaterThanOrEqual(BigInt("1250000000000000000"));
+    expect(borrowCapacityAssets(required - BigInt("1"), price, lltv) * WAD)
+      .toBeLessThan(debt * BigInt("1250000000000000000"));
   });
 
   test("accounts for borrow-share rounding when reporting current available capacity", () => {
