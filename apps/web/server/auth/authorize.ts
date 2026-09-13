@@ -20,8 +20,7 @@ type SessionBoundary = (
 
 export const sessionHandler = createSessionHandler({
   getValidator: getCdpAccessTokenValidator,
-  homeSessionSecret: process.env.HOME_SESSION_SECRET,
-  baseAccountEnabled: isHomeSessionConfigured(process.env.HOME_SESSION_SECRET),
+  baseAccountEnabled: () => isHomeSessionConfigured(process.env.HOME_SESSION_SECRET),
 });
 
 /**

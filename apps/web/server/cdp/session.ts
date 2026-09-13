@@ -141,7 +141,7 @@ function normalizeVerifiedEndUser(
 
 export type SessionHandlerDependencies = {
   getValidator: () => Promise<AccessTokenValidator>;
-  baseAccountEnabled?: boolean;
+  baseAccountEnabled?: boolean | (() => boolean);
   homeSessionSecret?: string;
   issueCookies?: (session: VerifiedAccountSession, request: Request) => string[];
 };
@@ -248,9 +248,7 @@ function readAccountProvider(request: Request): AccountProviderRequest | null {
 export function createSessionHandler({
   getValidator,
   homeSessionSecret,
-  baseAccountEnabled = isHomeSessionConfigured(
-    homeSessionSecret ?? process.env.HOME_SESSION_SECRET,
-  ),
+  baseAccountEnabled,
   issueCookies,
 }: SessionHandlerDependencies) {
   return async function GET(request: Request): Promise<Response> {
@@ -261,7 +259,12 @@ export function createSessionHandler({
 
     const authorizationPresent = request.headers.has("Authorization");
     const accessToken = readBearerToken(request);
-    const nativeSession = baseAccountEnabled
+    const nativeBaseAccountEnabled = typeof baseAccountEnabled === "function"
+      ? baseAccountEnabled()
+      : baseAccountEnabled ?? isHomeSessionConfigured(
+        homeSessionSecret ?? process.env.HOME_SESSION_SECRET,
+      );
+    const nativeSession = nativeBaseAccountEnabled
       ? readNativeBaseSession(request, homeSessionSecret)
       : { kind: "absent" as const };
     if (authorizationPresent && nativeSession.kind !== "absent") {
