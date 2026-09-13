@@ -402,7 +402,7 @@ describe("Home shell routing and intents", () => {
     render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} />);
     await waitForVerifiedShell();
 
-    fireEvent.click(page().getByRole("button", { name: "Borrow" }));
+    fireEvent.click(page().getByRole("button", { name: /Explore Borrow/ }));
     expect(`${window.location.pathname}${window.location.search}`).toBe("/dashboard?panel=borrow");
     expect(await page().findByText("Borrow from verified isolated markets on Base.")).toBeTruthy();
     expect(within(page().getByRole("navigation", { name: "Main navigation" })).queryByRole("button", { name: "Borrow" })).toBeNull();
