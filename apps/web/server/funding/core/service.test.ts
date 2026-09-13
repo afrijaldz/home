@@ -142,6 +142,41 @@ describe("FundingCore", () => {
     expect(captured[0]?.returnUrl).toBe("https://preview.home.example/fund?return=funding");
   });
 
+  test("propagates provider quote transport errors for the route to report QUOTE_UNAVAILABLE", async () => {
+    const providerError = Object.assign(new TypeError("synthetic quote timeout"), {
+      code: "ETIMEDOUT",
+    });
+    const provider: FundingProvider = {
+      manifest: { ...manifest, quotes: true },
+      async createQuote() { throw providerError; },
+      async createOrder() { return { outcome: "ambiguous" }; },
+      async getOrder() { return { state: "unknown", providerStatus: "unknown" }; },
+    };
+    const core = new FundingCore({
+      providers: [provider],
+      store: new MemoryFundingOrderStore(),
+      env: {
+        FIXTURE_KEY: "set",
+        FUNDING_QUOTE_SECRET: "x".repeat(32),
+      },
+      currentBaseBlock: async () => "1",
+      verifyReceipt: async () => null,
+    });
+
+    try {
+      await core.createQuote(
+        session,
+        { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" },
+        "https://home.example",
+      );
+      throw new Error("Expected provider quote error.");
+    } catch (error) {
+      expect(error).toBe(providerError);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error).toMatchObject({ code: "ETIMEDOUT" });
+    }
+  });
+
   test("marks a contradictory post-create token echo dispatch-ambiguous", async () => {
     const core = coreWithInstruction(
       { kind: "bank-transfer", rail: "VA", accountNumber: "12345678", amount: "20000", currency: "IDR" },
@@ -157,7 +192,31 @@ describe("FundingCore", () => {
     expect(order.instructions).toBeNull();
   });
 
-  test("marks unsafe redirect and embed instruction URLs dispatch-ambiguous", async () => {
+  test("persists a safe embed instruction while awaiting payment", async () => {
+    const instruction = {
+      kind: "embed",
+      url: "https://pay.example/apple-pay",
+      presentation: "apple-pay",
+      amount: "20.50",
+      currency: "USD",
+    } as const satisfies Instruction;
+    const core = coreWithInstruction(instruction);
+    const quote = await core.createQuote(
+      session,
+      { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" },
+      "https://home.example",
+    );
+    const order = await core.createOrder(
+      session,
+      { quoteToken: quote.quoteToken },
+      "https://home.example",
+    );
+
+    expect(order.state).toBe("awaiting-payment");
+    expect(order.instructions).toEqual(instruction);
+  });
+
+  test("marks unsafe redirect and embed instruction values dispatch-ambiguous", async () => {
     const scenarios: Array<
       | Extract<Instruction, { kind: "redirect" }>
       | Extract<Instruction, { kind: "embed" }>
@@ -167,6 +226,8 @@ describe("FundingCore", () => {
       { kind: "redirect", url: "https://user@pay.example/pay" },
       { kind: "embed", url: "https://pay.example/pay#secret", presentation: "apple-pay", amount: "20", currency: "USD" },
       { kind: "embed", url: `https://pay.example/${"x".repeat(4096)}`, presentation: "apple-pay", amount: "20", currency: "USD" },
+      { kind: "embed", url: "https://pay.example/pay", presentation: "apple-pay", amount: "020", currency: "USD" },
+      { kind: "embed", url: "https://pay.example/pay", presentation: "apple-pay", amount: "20", currency: "usd" },
     ];
     for (const instruction of scenarios) {
       const core = coreWithInstruction(instruction);

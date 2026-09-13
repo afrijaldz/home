@@ -3,7 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
 import { getFundingAsset } from "@/shared/funding/assets";
-import type { FundingProvider, Observation, Quote } from "@/shared/funding/provider-contract";
+import type { FundingProvider, Instruction, Observation, Quote } from "@/shared/funding/provider-contract";
 import { decimalToAtomic } from "@/shared/formatting/atomic";
 import { createProviderContext } from "./provider-context";
 import { authenticateFundingQuote, isFundingQuoteExpired, signFundingQuote } from "./quote-token";
@@ -81,20 +81,13 @@ export class FundingCore {
       if (!provider.ensureCustomer || !parsed.kycFields) throw new FundingCoreError("KYC_REQUIRED", 400);
       customerRef = (await provider.ensureCustomer({ subject: session.user.subject, fields: parsed.kycFields }, ctx)).customerRef;
     }
-    let quote: Quote;
-    if (provider.createQuote) {
-      try {
-        quote = await provider.createQuote({
+    const quote: Quote = provider.createQuote
+      ? await provider.createQuote({
           destination: session.smartAccount.address,
           fiatAmount: parsed.fiatAmount,
           returnUrl: `${returnOrigin}/fund?return=funding`,
-        }, ctx);
-      } catch {
-        throw new FundingCoreError("INVALID_PROVIDER_QUOTE", 502);
-      }
-    } else {
-      quote = localOneToOneQuote(parsed.fiatAmount, asset.decimals, this.now());
-    }
+        }, ctx)
+      : localOneToOneQuote(parsed.fiatAmount, asset.decimals, this.now());
     if (quote.fiatAmount !== parsed.fiatAmount || !validAtomic(quote.tokenAmountAtomic) || Date.parse(quote.expiresAt) <= this.now().getTime()) {
       throw new FundingCoreError("INVALID_PROVIDER_QUOTE", 502);
     }
@@ -258,11 +251,18 @@ function localOneToOneQuote(fiatAmount: string, decimals: number, now: Date): Qu
 }
 function validAtomic(value: string) { return /^(0|[1-9][0-9]*)$/.test(value); }
 function instructionUrlIsSafe(
-  instruction: import("@/shared/funding/provider-contract").Instruction,
+  instruction: Instruction,
   redirectOrigins: ReadonlyArray<string> | undefined,
 ): boolean {
   if (instruction.kind !== "redirect" && instruction.kind !== "embed") return true;
-  if (instruction.url.length > 4096 || !redirectOrigins?.length) return false;
+  if (
+    instruction.url.length > 4096 ||
+    !redirectOrigins?.length ||
+    (instruction.kind === "embed" && (
+      !/^(0|[1-9]\d*)(\.\d+)?$/.test(instruction.amount) ||
+      !/^[A-Z]{3}$/.test(instruction.currency)
+    ))
+  ) return false;
   try {
     const url = new URL(instruction.url);
     return (

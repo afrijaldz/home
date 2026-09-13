@@ -118,6 +118,7 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
       },
     } satisfies FundingReservation;
     const reserving = { ...awaiting, id: randomUUID(), intentDigest: randomUUID(), quoteToken: `signed-${randomUUID()}` };
+    const ambiguous = { ...awaiting, id: randomUUID(), intentDigest: randomUUID(), quoteToken: `signed-${randomUUID()}` };
     await store.reserve(awaiting);
     await store.completeDispatch(awaiting.id, {
       providerOrderId: "hosted-session-token",
@@ -129,10 +130,17 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
       updatedAt: "2026-09-12T00:00:01.000Z",
     });
     await store.reserve(reserving);
+    await store.reserve(ambiguous);
+    await store.markDispatchAmbiguous(
+      ambiguous.id,
+      0,
+      "2026-09-12T00:00:01.000Z",
+    );
 
     await client.unsafe(hostedRetirementMigration);
     const expired = await store.getOwned(awaiting.id, awaiting.owner);
     const failed = await store.getOwned(reserving.id, reserving.owner);
+    const ambiguousFailed = await store.getOwned(ambiguous.id, ambiguous.owner);
     expect(expired).toMatchObject({
       state: "expired",
       providerStatus: "HOSTED_SESSION_RETIRED",
@@ -145,11 +153,18 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
       instructions: null,
       version: 1,
     });
+    expect(ambiguousFailed).toMatchObject({
+      state: "failed",
+      providerStatus: "HOSTED_SESSION_RETIRED",
+      instructions: null,
+      version: 2,
+    });
     expect(await store.getOpen(awaiting.owner, "US")).toBeNull();
 
     await client.unsafe(hostedRetirementMigration);
     expect((await store.getOwned(awaiting.id, awaiting.owner))?.version).toBe(2);
     expect((await store.getOwned(reserving.id, reserving.owner))?.version).toBe(1);
+    expect((await store.getOwned(ambiguous.id, ambiguous.owner))?.version).toBe(2);
   });
 });
 

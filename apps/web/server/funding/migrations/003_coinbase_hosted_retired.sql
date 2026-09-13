@@ -8,7 +8,7 @@ SET state = 'failed',
     updated_at = now()
 WHERE provider_id = 'coinbase'
   AND payment_method = 'hosted'
-  AND state = 'reserving';
+  AND state IN ('reserving', 'dispatch-ambiguous');
 
 UPDATE funding_orders
 SET state = 'expired',
@@ -20,7 +20,6 @@ WHERE provider_id = 'coinbase'
   AND payment_method = 'hosted'
   AND state NOT IN (
     'reserving',
-    'dispatch-ambiguous',
     'received',
     'expired',
     'cancelled',

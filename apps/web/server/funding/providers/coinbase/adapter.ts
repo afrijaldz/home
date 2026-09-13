@@ -73,9 +73,15 @@ export function createCoinbaseProvider(
         emitHttpFailure(response.status, startedAt);
         throw new Error("Coinbase quote request failed.");
       }
+      let text: string;
       try {
-        const payload = parseProviderJson(await readBoundedText(response));
-        return quoteFromResponse(payload, input);
+        text = await readBoundedText(response);
+      } catch (error) {
+        emitFailure("PROVIDER_TRANSPORT", startedAt, "unavailable");
+        throw error;
+      }
+      try {
+        return quoteFromResponse(parseProviderJson(text), input);
       } catch (error) {
         emitFailure("QUOTE_ECHO_MISMATCH", startedAt, "failed");
         throw error;
@@ -382,7 +388,11 @@ async function classifyCreateFailure(
   if (response.status !== 400) return { outcome: "ambiguous" };
   try {
     const payload = parseProviderJson(await readBoundedText(response));
-    if (!isRecord(payload)) return { outcome: "ambiguous" };
+    if (
+      !isRecord(payload) ||
+      (typeof payload.errorType !== "string" &&
+        typeof payload.errorMessage !== "string")
+    ) return { outcome: "ambiguous" };
     return {
       outcome: "rejected",
       message: "Coinbase rejected the funding order.",

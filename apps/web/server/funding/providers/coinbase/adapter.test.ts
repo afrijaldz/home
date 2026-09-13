@@ -228,6 +228,18 @@ describe("Coinbase headless funding adapter", () => {
     }
   });
 
+  test("rejects quote payment-total drift and purchase amounts beyond six decimals", async () => {
+    for (const response of [
+      () => quoteResponse({ paymentTotal: "25.01", paymentSubtotal: "24.51" }),
+      () => quoteResponse({ purchaseAmount: "24.5000001" }),
+    ]) {
+      await expect(provider.createQuote!(
+        quoteIntent,
+        context((async () => response()) as unknown as typeof fetch),
+      )).rejects.toBeInstanceOf(Error);
+    }
+  });
+
   test("pins purchaseAmount to the signed token amount and sends the Home reference", async () => {
     const requests: RequestInit[] = [];
     const result = await provider.createOrder(
@@ -278,6 +290,29 @@ describe("Coinbase headless funding adapter", () => {
     expect(httpCalls).toBe(0);
   });
 
+  test("rejects JWT generation failure before sending an order request", async () => {
+    let httpCalls = 0;
+    const adapter = createCoinbaseProvider({
+      generateJwtImplementation: async () => {
+        throw new Error("synthetic JWT failure");
+      },
+    });
+
+    const result = await adapter.createOrder(
+      intent,
+      context((async () => {
+        httpCalls += 1;
+        return createResponse();
+      }) as unknown as typeof fetch),
+    );
+
+    expect(result).toEqual({
+      outcome: "rejected",
+      message: "Coinbase could not authorize this funding order.",
+    });
+    expect(httpCalls).toBe(0);
+  });
+
   test("maps every contradictory create echo to ambiguous with one call", async () => {
     const cases: Array<{
       name: string;
@@ -308,13 +343,30 @@ describe("Coinbase headless funding adapter", () => {
     }
   });
 
+  test("maps a create fee-equation mismatch to ambiguous after one call", async () => {
+    let calls = 0;
+    const result = await provider.createOrder(
+      intent,
+      context((async () => {
+        calls += 1;
+        return createResponse({ paymentSubtotal: "25.01" });
+      }) as unknown as typeof fetch),
+    );
+
+    expect(result).toEqual({ outcome: "ambiguous" });
+    expect(calls).toBe(1);
+  });
+
   test("classifies create HTTP and transport failures without retrying", async () => {
     const cases: Array<{
       name: string;
       response: () => Response | Promise<Response>;
       outcome: "rejected" | "ambiguous";
     }> = [
-      { name: "400 JSON", response: () => Response.json({ source: "synthetic", error: "invalid" }, { status: 400 }), outcome: "rejected" },
+      { name: "400 errorType", response: () => Response.json({ source: "synthetic", errorType: "invalid" }, { status: 400 }), outcome: "rejected" },
+      { name: "400 errorMessage", response: () => Response.json({ source: "synthetic", errorMessage: "invalid" }, { status: 400 }), outcome: "rejected" },
+      { name: "400 empty JSON", response: () => Response.json({}, { status: 400 }), outcome: "ambiguous" },
+      { name: "400 other JSON", response: () => Response.json({ source: "synthetic", error: "invalid" }, { status: 400 }), outcome: "ambiguous" },
       { name: "400 non-JSON", response: () => new Response("invalid", { status: 400 }), outcome: "ambiguous" },
       { name: "409", response: () => Response.json({ source: "synthetic" }, { status: 409 }), outcome: "ambiguous" },
       { name: "422", response: () => Response.json({ source: "synthetic" }, { status: 422 }), outcome: "ambiguous" },
@@ -424,6 +476,26 @@ describe("Coinbase headless funding adapter", () => {
       reconciliationIntent,
       context((async () => { throw new Error("synthetic transport"); }) as unknown as typeof fetch),
     )).resolves.toMatchObject({ state: "unknown" });
+  });
+
+  test("logs oversized quote bodies as provider transport failures", async () => {
+    const lines: string[] = [];
+    setObservabilityLogWriterForTests((line) => lines.push(line));
+
+    await expect(provider.createQuote!(
+      quoteIntent,
+      context((async () => new Response("{}", {
+        status: 201,
+        headers: { "content-length": String(64 * 1024 + 1) },
+      })) as unknown as typeof fetch),
+    )).rejects.toBeInstanceOf(Error);
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      kind: "funding-order",
+      provider: "coinbase",
+      code: "PROVIDER_TRANSPORT",
+    });
   });
 
   test("emits only closed, scrubbed funding-order failure events", async () => {

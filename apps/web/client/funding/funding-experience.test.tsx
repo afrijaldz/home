@@ -1,7 +1,7 @@
 import "@/client/account/dom-test-harness";
 
 import { page } from "@/tests/helpers/dom";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AccountWalletClient } from "@/client/account/cdp-client";
 import { getHomeQueryClient } from "@/client/query/query-client";
 
@@ -268,6 +268,47 @@ describe("FundingExperience", () => {
 
     resolveStatus({ order: applePayOrder("settling") });
     await waitFor(() => expect(Boolean(page().queryByTitle("Apple Pay")), "iframe after settling").toBe(false));
+  });
+
+  test("removes the Apple Pay message listener on unmount", async () => {
+    const addListener = spyOn(window, "addEventListener");
+    const removeListener = spyOn(window, "removeEventListener");
+    const openOrder = applePayOrder();
+    const wallet = {
+      ...verifiedWallet(),
+      fetchAccountResource: async (path: string) => {
+        if (path.startsWith("/api/funding/providers")) return { providers: [applePayBinding()] };
+        if (path.startsWith("/api/funding/orders")) return { order: openOrder };
+        throw new Error("unexpected request");
+      },
+    };
+    const view = render(
+      <FundingExperienceForWallet
+        wallet={wallet}
+        navigateToRedirect={() => {}}
+        regionId="US"
+      />,
+    );
+
+    try {
+      await page().findByRole("heading", { name: "Review payment details" });
+      fireEvent.click(page().getByRole("button", { name: "View payment instructions" }));
+      await page().findByTitle("Apple Pay");
+      const messageRegistration = addListener.mock.calls.find(
+        ([type]) => type === "message",
+      );
+      expect(messageRegistration).toBeDefined();
+
+      view.unmount();
+
+      expect(removeListener).toHaveBeenCalledWith(
+        "message",
+        messageRegistration?.[1],
+      );
+    } finally {
+      addListener.mockRestore();
+      removeListener.mockRestore();
+    }
   });
 
   test("refuses to render an insecure embed URL", async () => {
