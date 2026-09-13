@@ -22,6 +22,7 @@ import {
 import { markHomePerformance } from "@/client/observability/perf-marks";
 import { useOptionalHomeShellRouting } from "@/client/home/panel-routing";
 import { SendDialog } from "./send-dialog";
+import type { AssetMarkResolution } from "@/client/asset-mark/presentation";
 import type { TransferAssetAvailability } from "@/shared/transfers/types";
 
 const subscribeToMountedState = () => () => {};
@@ -32,6 +33,7 @@ export type TransferActionsProps = {
   initialOpen?: boolean;
   initialActionId?: string | null;
   availableAssets?: readonly TransferAssetAvailability[];
+  assetMarkResolution?: AssetMarkResolution;
 };
 
 type TransferWallet = Pick<
@@ -54,6 +56,7 @@ export function TransferActionsForWallet({
   initialOpen = false,
   initialActionId = null,
   availableAssets,
+  assetMarkResolution,
 }: TransferActionsProps & { wallet: TransferWallet }) {
   const routing = useOptionalHomeShellRouting();
   const [sendOpen, setSendOpen] = useState(false);
@@ -136,6 +139,7 @@ export function TransferActionsForWallet({
               address={verifiedAddress}
               immediate={dropPrivate}
               availableAssets={availableAssets}
+              assetMarkResolution={assetMarkResolution}
               prepareMoneyAction={wallet.prepareMoneyAction}
               resumeMoneyAction={wallet.resumeMoneyAction}
               executeMoneyAction={wallet.executeMoneyAction}

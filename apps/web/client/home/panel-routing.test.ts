@@ -7,7 +7,7 @@ const inboundCases = [
     expected: {
       panel: "balances",
       account: null,
-      location: { panel: "balances", account: null, shelf: null, asset: null },
+      location: { panel: "balances", account: null, shelf: null, asset: null, group: null },
       addMoney: false,
       returnedFromProvider: false,
       flow: null,
@@ -20,7 +20,7 @@ const inboundCases = [
     expected: {
       panel: "activity",
       account: "settings",
-      location: { panel: "activity", account: "settings", shelf: null, asset: null },
+      location: { panel: "activity", account: "settings", shelf: null, asset: null, group: null },
       addMoney: false,
       returnedFromProvider: false,
       flow: null,
@@ -33,7 +33,7 @@ const inboundCases = [
     expected: {
       panel: "home",
       account: null,
-      location: { panel: "home", account: null, shelf: null, asset: null },
+      location: { panel: "home", account: null, shelf: null, asset: null, group: null },
       addMoney: true,
       returnedFromProvider: true,
       flow: null,
@@ -46,7 +46,7 @@ const inboundCases = [
     expected: {
       panel: "home",
       account: null,
-      location: { panel: "home", account: null, shelf: null, asset: null },
+      location: { panel: "home", account: null, shelf: null, asset: null, group: null },
       addMoney: false,
       returnedFromProvider: false,
       flow: "send",
@@ -59,7 +59,7 @@ const inboundCases = [
     expected: {
       panel: "save",
       account: null,
-      location: { panel: "save", account: null, shelf: null, asset: null },
+      location: { panel: "save", account: null, shelf: null, asset: null, group: null },
       addMoney: false,
       returnedFromProvider: false,
       flow: "save-deposit",

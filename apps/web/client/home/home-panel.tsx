@@ -15,12 +15,12 @@ import type { FetchActivity } from "@/client/activity";
 import { FundingActions } from "@/client/funding/funding-actions";
 import { SavingsTeaser } from "@/client/savings/savings-teaser";
 import { TransferActions } from "@/client/transfers";
-import { previewBalanceRows } from "@/shared/balances/present";
+import type { MoneyGroupPresentation } from "@/shared/balances/present";
 import type { TransferAssetAvailability } from "@/shared/transfers/types";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
 import type { RegionId } from "@/config/regions";
 import { ConnectedActivityPanel } from "./activity-panel";
-import { HomeBalancesList } from "./balances-panel";
+import { HomeMoneyGroups } from "./balances-panel";
 import type { HomeAssetBalancesPresentation } from "./home-types";
 import { ShimmerRows } from "./panel-shared";
 
@@ -31,7 +31,7 @@ function SectionHeader({
   actionLabel = "See all",
 }: {
   headingId: string;
-  title: "Balances" | "Save" | "Activity";
+  title: "Your money" | "Save" | "Activity";
   onOpen: () => void;
   actionLabel?: "See all" | "Earn";
 }) {
@@ -69,7 +69,7 @@ export function HomePanel({
   fetchActivity: FetchActivity;
   fetchOperations: (signal?: AbortSignal) => Promise<unknown>;
   onOpenSave: () => void;
-  onOpenBalances: () => void;
+  onOpenBalances: (group?: MoneyGroupPresentation["id"]) => void;
   onOpenActivity: () => void;
   initialAddMoney?: boolean;
   returnedFromProvider?: boolean;
@@ -85,7 +85,7 @@ export function HomePanel({
     : assetBalances?.status === "unavailable"
       ? "Balance unavailable"
       : "Total balance";
-  const balanceRows = assetBalances?.rows ?? [];
+  const moneyGroups = assetBalances?.groups ?? [];
   const balanceStatusLabel = assetBalances?.statusLabel;
   const showBalanceStatus =
     assetBalances?.status !== "loading" && Boolean(balanceStatusLabel);
@@ -97,7 +97,8 @@ export function HomePanel({
         aria-label={heroLabel}
         aria-busy={isLoading || isRevalidating || undefined}
       >
-        <CardContent className="space-y-2 p-5 sm:p-6">
+        <CardContent className="space-y-2 px-4 py-5 sm:px-5 sm:py-6">
+          <p className="text-sm text-muted-foreground">Total balance</p>
           {isLoading ? (
             <Skeleton className="h-10 w-48" data-shimmer="hero" />
           ) : (
@@ -105,10 +106,25 @@ export function HomePanel({
               <MoneyTicker value={assetBalances?.displayTotal ?? "—"} />
             </div>
           )}
-          {showBalanceStatus ? (
-            <p className="text-sm text-muted-foreground" data-total-status={assetBalances?.totalStatus}>
-              {balanceStatusLabel}
-            </p>
+          {assetBalances?.breakdown.length || showBalanceStatus ? (
+            <div className="flex w-full flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+              {assetBalances?.breakdown.length ? (
+                <p className="flex flex-wrap items-center gap-x-1 text-xs tabular-nums sm:text-sm">
+                  {assetBalances.breakdown.map((item, index) => (
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap" key={item.id}>
+                      <span>{item.label}</span>
+                      <MoneyTicker value={item.value} reserveDigits={false} />
+                      {index < assetBalances.breakdown.length - 1 ? <span aria-hidden="true">·</span> : null}
+                    </span>
+                  ))}
+                </p>
+              ) : <span />}
+              {showBalanceStatus ? (
+                <p className="text-right" data-total-status={assetBalances?.totalStatus}>
+                  {balanceStatusLabel}
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {isLoading || isRevalidating ? <span className="sr-only">Updating…</span> : null}
         </CardContent>
@@ -127,20 +143,22 @@ export function HomePanel({
         />
       </div>
 
-      <section aria-labelledby="balances-heading">
+      <section aria-labelledby="your-money-heading">
         <Card>
           <CardHeader>
             <SectionHeader
-              headingId="balances-heading"
-              title="Balances"
-              onOpen={onOpenBalances}
+              headingId="your-money-heading"
+              title="Your money"
+              onOpen={() => onOpenBalances()}
             />
           </CardHeader>
           <CardContent className="px-2">
-            <HomeBalancesList
-              rows={previewBalanceRows(balanceRows, assetBalances?.hiddenRows)}
+            <HomeMoneyGroups
+              groups={moneyGroups}
+              hiddenRows={assetBalances?.hiddenRows}
               isLoading={isLoading}
               isUnavailable={assetBalances?.status === "unavailable"}
+              onOpenGroup={onOpenBalances}
             />
           </CardContent>
         </Card>

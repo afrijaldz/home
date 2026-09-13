@@ -32,7 +32,7 @@ curl -sI -H "x-deployment-id: <current dpl id>" https://<preview>/api/market-pri
 
 Copy names from [`.env.example`](../.env.example); keep values in Vercel or gitignored `apps/web/.env.local`. Never expose server keys with `NEXT_PUBLIC_`.
 
-Actions and balance observations require server-only `DATABASE_URL`; apply the checked-in schema with `bun run db:migrate` before serving traffic. Configure server-only `BASE_RPC_URL` for hosted Base reads. Email sign-in requires the CDP project ID plus server validation keys. See [CDP setup](cdp-setup.md) for allowed origins.
+Actions and balance observations require server-only `DATABASE_URL`; Home connects to PostgreSQL via `pg`, so Neon works as a regular Postgres database; keep `?sslmode=require` (or `verify-full`) in the URL and use Neon's pooled hostname on Vercel. Apply the disposable schema with `bun run db:migrate` (idempotent; safe on a database bootstrapped by the earlier runtime DDL). Configure server-only `BASE_RPC_URL` for hosted Base reads. Email sign-in requires the CDP project ID plus server validation keys. See [CDP setup](cdp-setup.md) for allowed origins.
 
 ## CDP balance activity webhook
 

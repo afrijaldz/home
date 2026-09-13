@@ -1,5 +1,5 @@
 /** Degrees per millisecond. Inertia approaches the gentle default, never zero. */
-export const DEFAULT_VELOCITY = .0025;
+export const DEFAULT_VELOCITY = .005;
 export const MAX_VELOCITY = .18;
 const DECAY_TIME = 900;
 

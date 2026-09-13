@@ -99,8 +99,8 @@ function CopyableValueControl({
       <Button
         variant="ghost"
         className={cn(
-          "inline h-auto min-h-0 min-w-0 border-0 bg-transparent p-0 font-mono text-inherit no-underline whitespace-normal break-all transition-colors hover:bg-transparent active:translate-y-0",
-          presentation === "full" && "flex min-h-11 w-full items-start justify-start gap-2 py-2 text-left text-sm",
+          "inline h-auto min-h-0 min-w-0 border-0 bg-transparent p-0 font-mono text-inherit no-underline transition-colors hover:bg-transparent active:translate-y-0",
+          presentation === "full" && "flex min-h-11 w-full max-w-full items-center justify-start gap-2 overflow-hidden py-2 text-left text-sm",
           status === "copied" && "text-primary",
           className,
         )}
@@ -108,11 +108,16 @@ function CopyableValueControl({
         aria-label={controlLabel}
         onClick={() => void copy()}
       >
-        <span className={cn(presentation === "full" && "min-w-0 flex-1 break-all")}>
+        <span
+          className={cn(
+            presentation === "full" &&
+              "min-w-0 flex-1 overflow-x-auto pr-2 whitespace-nowrap",
+          )}
+        >
           {status === "copied" ? copiedLabel : shown}
         </span>
         {presentation === "full" ? (
-          <Copy className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <Copy className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         ) : null}
       </Button>
       <span className="sr-only" aria-live="polite" aria-atomic="true">

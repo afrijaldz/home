@@ -5,10 +5,12 @@ export const SHELL_PANEL_PARAM = "panel";
 export const SHELL_ACCOUNT_PARAM = "account";
 export const SHELL_SHELF_PARAM = "shelf";
 export const SHELL_ASSET_PARAM = "asset";
+export const SHELL_GROUP_PARAM = "group";
 export const SHELL_FLOW_PARAM = "flow";
 export const SHELL_ACTION_PARAM = "action";
 
 export type ShellAccount = "signin" | "settings";
+export type MoneyGroupId = "cash" | "investments";
 export type ShellFlow =
   | "send"
   | "add-money"
@@ -21,6 +23,7 @@ export type ShellLocation = {
   account: ShellAccount | null;
   shelf: string | null;
   asset: string | null;
+  group: MoneyGroupId | null;
 };
 
 export type InboundUrlIntent = {
@@ -38,6 +41,7 @@ export type ShellSearchInput = URLSearchParams | Record<
 >;
 
 const discoverShelfIds = new Set(["stocks", "crypto", "memes"]);
+const moneyGroups = new Set<MoneyGroupId>(["cash", "investments"]);
 const shellFlows = new Set<ShellFlow>([
   "send",
   "add-money",
@@ -94,6 +98,10 @@ function parseAsset(value: string | undefined): string | null {
   return value && resolveMarketPriceAssetIdentity(value) ? value : null;
 }
 
+function parseMoneyGroup(value: string | undefined): MoneyGroupId | null {
+  return value && moneyGroups.has(value as MoneyGroupId) ? value as MoneyGroupId : null;
+}
+
 function parseShellFlow(value: string | undefined): ShellFlow | null {
   return value && shellFlows.has(value as ShellFlow) ? value as ShellFlow : null;
 }
@@ -120,6 +128,9 @@ export function parseInboundUrlIntent(
       asset: panel === "invest"
         ? parseAsset(readSearchValue(search, SHELL_ASSET_PARAM))
         : null,
+      group: panel === "balances"
+        ? parseMoneyGroup(readSearchValue(search, SHELL_GROUP_PARAM))
+        : null,
     },
     returnedFromFunding: readSearchValue(search, "return") === "funding",
     addMoney: readSearchValue(search, "add-money") === "1",
@@ -139,6 +150,7 @@ export function shellHref(
     account = null,
     shelf = null,
     asset = null,
+    group = null,
   }: Partial<ShellLocation> = {},
 ): string {
   const params = new URLSearchParams();
@@ -148,6 +160,7 @@ export function shellHref(
     if (shelf) params.set(SHELL_SHELF_PARAM, shelf);
     if (asset) params.set(SHELL_ASSET_PARAM, asset);
   }
+  if (panel === "balances" && group) params.set(SHELL_GROUP_PARAM, group);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }

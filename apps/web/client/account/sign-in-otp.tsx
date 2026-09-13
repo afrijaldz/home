@@ -29,7 +29,7 @@ export function SignInOtp({
   onResend: () => void;
 }) {
   return (
-    <form className="mt-6 space-y-4" onSubmit={onSubmit}>
+    <form className="mt-4 space-y-4" onSubmit={onSubmit}>
       <Field>
         <FieldLabel htmlFor="account-otp">
           Verification code<span className="text-destructive" aria-hidden="true">*</span>

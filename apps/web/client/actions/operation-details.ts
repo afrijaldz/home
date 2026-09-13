@@ -78,8 +78,8 @@ export function presentOperationDetails(
   if (operation.transactionHash) {
     rows.push({
       label: "Transaction",
-      value: condensedTransactionHash(operation.transactionHash),
-      title: operation.transactionHash,
+      value: operation.transactionHash,
+      display: condensedTransactionHash(operation.transactionHash),
     });
   }
 

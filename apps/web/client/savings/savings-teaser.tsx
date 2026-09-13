@@ -32,10 +32,7 @@ import {
   nextSavingsRateExpiryAt,
   summarizeSavingsPortfolio,
 } from "./portfolio-summary";
-import {
-  preferredSavingsCandidates,
-  savingsVaultApyLabel,
-} from "./format";
+import { savingsTeaserApyLabel } from "./savings-teaser-apy";
 import { ShimmerRows } from "@/client/home/panel-shared";
 
 const BASE_USDC_ASSET = {
@@ -105,9 +102,6 @@ export function SavingsTeaser({ onOpen }: { onOpen: () => void }) {
       nowMs: rateNowMs,
     });
   }, [metadataQuery.data, positions, rateNowMs]);
-  const candidate = metadataQuery.data
-    ? preferredSavingsCandidates(metadataQuery.data.candidates)[0] ?? null
-    : null;
   // A restoring/validating session is unknown, not zero: keep the shimmer until the owner is known.
   const sessionSettling = account.status === "restoring" || account.status === "validating";
   const loading = sessionSettling ||
@@ -123,8 +117,13 @@ export function SavingsTeaser({ onOpen }: { onOpen: () => void }) {
     : balance
       ? <MoneyTicker value={formatUsdStablecoinAmount(balance.totalBaseUnits)} />
       : <MoneyTicker value="—" />;
-  const description = candidate && metadataQuery.data
-    ? `${candidate.name} · ${savingsVaultApyLabel(candidate, metadataQuery.data, rateNowMs)}`
+  const description = metadataQuery.data && (summary || !sessionKey)
+    ? savingsTeaserApyLabel({
+        summary,
+        candidates: metadataQuery.data.candidates,
+        metadata: metadataQuery.data,
+        nowMs: rateNowMs,
+      })
     : null;
 
   return (

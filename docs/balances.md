@@ -1,6 +1,6 @@
 # Balances: one snapshot, every row, cached on the device
 
-Status: **G1 CDP-first server, G2 deletion, and G3 server observation shipped; dust default (G4) locked, not yet built** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
+Status: **G1 CDP-first server, G2 deletion, G3 server observation, and G4 dust default shipped** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
 
 ## What Jesse asked for
 
@@ -133,7 +133,7 @@ type BalanceRowModel = {
 
 Anatomy, identical for every source: `[32 px mark] name / secondary … primary`. Cash: `[flag] US dollar … $1,234.56` (from `cashValue`). Priced asset: `[image] Aerodrome / 12.5 AERO … $18.20`. Unpriced: `[image] Foo … 12.5 FOO` (muted). Cash unavailable: `Unavailable` in destructive tone. Loading: skeleton rows from a real `loading` state, not the `"Updating…"` sentinel.
 
-Membership rules (today's, made explicit): cash rows (canonical USD + selected local) always render, including at zero and when `unavailable`; non-cash rows render only with an authoritative positive balance — an `unavailable` non-cash registry row is **hidden** and surfaces through `coverage.registry: "partial"` → total status label, never as a wall of error rows; vault shares are never rows (they count in `total` and appear in Save via `selectVaultPositions`). Ordering: cash (selected local, canonical USD, other cash) → priced by value desc → unpriced by name → dust (< 1 cent) last (hidden by default once §9 lands). The Home teaser is the first four rows of the same order, catalog included. Formatting stays in `shared/formatting`.
+Membership rules (today's, made explicit): cash rows (canonical USD + selected local) always render, including at zero and when `unavailable`; non-cash rows render only with an authoritative positive balance — an `unavailable` non-cash registry row is **hidden** and surfaces through `coverage.registry: "partial"` → total status label, never as a wall of error rows; vault shares are never rows (they count in `total` and appear in Save via `selectVaultPositions`). Grouping and ordering: **Cash** (selected local, canonical USD, other cash — authored order, never re-sorted by value) and **Investments** (every other non-vault holding with a positive balance, priced by value desc → unpriced by name → dust last). Each group shows a quote-currency subtotal of its priced rows (omitted, never 0, when nothing is priced). The Home "Your money" card shows the first three non-dust rows of each group with a per-group "More" link into the panel (`?panel=balances&group=cash|investments`); the hero line shows Cash · Investments · Saved subtotals from the same snapshot. Formatting stays in `shared/formatting`. Dust behavior is described in §9.
 
 No 24 h change, no contract addresses, no source labels on rows (ui-direction). Rows are not tappable in this pass (they are not today).
 
@@ -177,9 +177,9 @@ Webhook subscription lifecycle (per fork/environment): an operator first creates
 
 Unverified until preview: the production `wallet.activity.multi` delivery envelope and exact documented address fields; whether production deliveries use `wallet.activity`, `wallet.activity.detected`, or `wallet.activity.multi`; list pagination beyond the first response; and address packing/update behavior at the 100-address boundary. The implementation tolerates snake_case list fixtures, never creates subscriptions at runtime (because the create response secret must be stored by the operator), and emits a bounded failure event without addresses.
 
-### 9. Dust hidden by default (G4, decided 2026-09-13, not yet built)
+### 9. Dust hidden by default (G4, shipped 2026-09-13)
 
-Rows below one cent in the presentation currency and unpriced `wallet` rows are hidden by default behind one "Show N hidden" control at the end of the Balances list; the choice persists per device (like country). The Home teaser never shows hidden rows. Cash rows and any row with a priced value ≥ one cent are never hidden. The total is unaffected (hidden rows were already not gated in).
+Rows below one cent in the presentation currency and unpriced `wallet` rows are hidden by default behind one "N small balances hidden · Show" control at the end of the Your money panel; the same preference is available in Account as "Show small balances" and persists per device under `home.show-small-balances.v1`. When enabled, the panel appends those rows after the visible Investments rows and offers "Hide small balances". The Home teaser never shows hidden rows. Cash rows and any row with a priced value ≥ one cent are never hidden. The total and group subtotals are unaffected.
 
 ## Sequencing (every integration point stays green)
 
@@ -193,7 +193,7 @@ Additive first, deletions last. No lane deletes something another lane's consume
 | **B2/B3 client + proof** (complete) | client selectors/query/persistence and smoke fixtures | one persisted v3 query and shared rows | — |
 | **B4/G2 deletion** (complete) | legacy `server/portfolio/**`, old routes/types/client imports | repoint any final consumers to balances-owned modules | legacy valuation/inventory/recognized paths and temporary re-export shims |
 | **G3 server observation** (complete) | `server/balances/{snapshot-store,webhook}.ts`, migration, `/confirm` + `/handle` hot window, `POST /api/webhooks/cdp`, subscription registration, `stale` on the contract + presenter age | §8 | per-instance TTL caches |
-| **G4 dust default** (after G2) | `shared/balances/present.ts`, Balances list control, per-device preference | §9 | — |
+| **G4 dust default** (complete) | `shared/balances/present.ts`, Your money list control, Account preference | §9 | — |
 
 G1 moved CDP Token Balances and Coinbase FX into `server/balances/`; G2 removed the temporary re-export shims with the legacy importers. Valuation math now lives in `shared/balances/math.ts` and presentation fiat formatting in `shared/formatting/presentation-fiat.ts`. Keep unchanged: `recognized-catalog.ts`, `raw-quotes.ts`, `server/chain/rpc.ts`, `MoneyTicker`, `BalanceRow`, `CurrencyMark`, and asset-mark.
 

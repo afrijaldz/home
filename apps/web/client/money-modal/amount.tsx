@@ -13,6 +13,8 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDownUp, Delete } from "lucide-react";
 import { CurrencyMark } from "@/components/currency-mark";
+import { InputGroupAddon } from "@/components/ui/input-group";
+import type { AssetMarkPresentation } from "@/client/asset-mark/presentation";
 import { usePresentationRegionId } from "@/client/invest/presentation-quote";
 import { applyNumpadKey, type NumpadKey } from "./numpad";
 import {
@@ -39,6 +41,13 @@ const AMOUNT_FIT_TOLERANCE_PX = 0.5;
 const AMOUNT_FIT_SAFETY_FACTOR = 0.97;
 
 export type MoneyAmountChangeSource = "keypad" | "programmatic";
+
+export type MoneyAssetOption = {
+  id: string;
+  label: string;
+  description?: string;
+  mark?: AssetMarkPresentation;
+};
 
 export function shouldAnimatePrimaryAmount(
   previousAmount: string,
@@ -209,7 +218,7 @@ export function MoneyAmountDisplay({
   assetId?: string;
   assetLabel?: string;
   assetCurrency?: string | null;
-  assetOptions?: ReadonlyArray<{ id: string; label: string; description?: string }>;
+  assetOptions?: ReadonlyArray<MoneyAssetOption>;
   onAssetChange?: (assetId: string) => void;
   assetLocked?: boolean;
   chipSet?: MoneyChipSet;
@@ -238,45 +247,45 @@ export function MoneyAmountDisplay({
 
   return (
     <div className="grid justify-items-center gap-3 py-3">
-      <div className="flex w-full items-center justify-between gap-2">
-        <MoneyAssetPicker
-          assetId={assetId}
-          assetLabel={assetLabel}
-          assetCurrency={assetCurrency}
-          assetOptions={assetOptions}
-          onAssetChange={onAssetChange}
-          locked={assetLocked}
+      <MoneyAssetPicker
+        assetId={assetId}
+        assetLabel={assetLabel}
+        assetCurrency={assetCurrency}
+        assetOptions={assetOptions}
+        onAssetChange={onAssetChange}
+        locked={assetLocked}
+      />
+      {onAmountChange ? (
+        <MoneyQuickChips
+          chipSet={chipSet}
+          localCurrency={pricing.status === "priced" ? pricing.localCurrency : "USD"}
+          primaryUnit={primaryUnit}
+          availableAmount={maxAmount}
+          onSelect={(value) => onAmountChange(value, "programmatic")}
         />
-        {onAmountChange ? (
-          <MoneyQuickChips
-            chipSet={chipSet}
-            localCurrency={pricing.status === "priced" ? pricing.localCurrency : "USD"}
-            primaryUnit={primaryUnit}
-            availableAmount={maxAmount}
-            onSelect={(value) => onAmountChange(value, "programmatic")}
-          />
-        ) : null}
-      </div>
+      ) : null}
       <MoneyPrimaryAmount
         amount={amount}
         changeSource={amountChangeSource}
         unit={primaryUnit}
         pricing={pricing}
       />
-      {pricing.status === "priced" ? (
-        <MoneyUnitToggle
-          secondaryLabel={secondary}
-          onToggle={() =>
-            setRequestedUnit((current) => (current === "local" ? "native" : "local"))
-          }
-        />
-      ) : null}
-      {availableLine ? (
-        <div className="text-center text-sm text-muted-foreground">
-          <MoneyTicker value={availableLine} />
-          {availableSuffix ? ` · ${availableSuffix}` : null}
-        </div>
-      ) : null}
+      <div className="grid justify-items-center gap-1">
+        {pricing.status === "priced" ? (
+          <MoneyUnitToggle
+            secondaryLabel={secondary}
+            onToggle={() =>
+              setRequestedUnit((current) => (current === "local" ? "native" : "local"))
+            }
+          />
+        ) : null}
+        {availableLine ? (
+          <div className="text-center text-sm text-muted-foreground">
+            <MoneyTicker value={availableLine} />
+            {availableSuffix ? ` · ${availableSuffix}` : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -339,7 +348,7 @@ export function MoneyAssetPicker({
   assetId?: string;
   assetLabel?: string;
   assetCurrency?: string | null;
-  assetOptions?: ReadonlyArray<{ id: string; label: string; description?: string }>;
+  assetOptions?: ReadonlyArray<MoneyAssetOption>;
   onAssetChange?: (assetId: string) => void;
   locked?: boolean;
 }) {
@@ -364,13 +373,36 @@ export function MoneyAssetPicker({
       onValueChange={(option) => { if (option) onAssetChange?.(option.id); }}
       itemToStringValue={(option) => option.label}
     >
-      <ComboboxInput aria-label="Asset" placeholder={assetLabel} className="w-auto min-w-28" />
+      <ComboboxInput aria-label="Asset" placeholder={assetLabel} className="h-11 w-auto min-w-28">
+        {selected?.mark ? (
+          <InputGroupAddon align="inline-start" className="[&_[data-mark]]:size-6">
+            <CurrencyMark
+              currency={selected.mark.currency}
+              symbol={selected.mark.symbol}
+              src={selected.mark.imageUrl}
+              pending={selected.mark.pending}
+            />
+          </InputGroupAddon>
+        ) : null}
+      </ComboboxInput>
       <ComboboxContent>
         <ComboboxEmpty>No assets found.</ComboboxEmpty>
         <ComboboxList>
           {(option) => (
             <ComboboxItem key={option.id} value={option}>
-              {option.description ? `${option.label} — ${option.description}` : option.label}
+              {option.mark ? (
+                <span className="shrink-0 [&_[data-mark]]:size-6">
+                  <CurrencyMark
+                    currency={option.mark.currency}
+                    symbol={option.mark.symbol}
+                    src={option.mark.imageUrl}
+                    pending={option.mark.pending}
+                  />
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate">
+                {option.description ? `${option.label} — ${option.description}` : option.label}
+              </span>
             </ComboboxItem>
           )}
         </ComboboxList>
@@ -397,7 +429,7 @@ export function MoneyQuickChips({
   const quickDisabled = primaryUnit === "native";
 
   return (
-    <div className="flex flex-wrap justify-end gap-2" role="group" aria-label="Quick amounts">
+    <div className="flex flex-wrap justify-center gap-2" role="group" aria-label="Quick amounts">
       {chipSet === "quick-local" ? (
         <>
           <Button

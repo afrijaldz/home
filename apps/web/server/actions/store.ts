@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createNeonSqlExecutor, type SqlExecutor } from "@/server/db/sql";
+import { createPostgresSqlExecutor, type SqlExecutor } from "@/server/db/sql";
 import {
   isActionKind,
   type ActionKind,
@@ -44,7 +44,7 @@ export type ActionRow = {
 };
 
 /**
- * Drivers disagree on jsonb: Neon's Pool returns parsed objects, Bun.SQL returns
+ * Drivers disagree on jsonb: pg's Pool returns parsed objects, Bun.SQL returns
  * the JSON text. Normalize at the query boundary so the store is driver-agnostic.
  */
 function parseJsonColumn<T>(value: unknown): T | null {
@@ -195,7 +195,7 @@ export function getActionsStore(): ActionsStore {
   if (runtimeStore) return runtimeStore;
   const url = process.env.DATABASE_URL?.trim();
   if (!url) throw new Error("DATABASE_URL is required for actions");
-  runtimeStore = new ActionsStore(createNeonSqlExecutor(url));
+  runtimeStore = new ActionsStore(createPostgresSqlExecutor(url));
   return runtimeStore;
 }
 

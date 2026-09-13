@@ -19,7 +19,7 @@ export function SignInBlockedPanel({
 }) {
   if (reason === "unconfigured") {
     return (
-      <Alert className="mt-6">
+      <Alert className="mt-4">
         <AlertTitle>{signInUnconfiguredCopy.heading}</AlertTitle>
         <AlertDescription>
           <p>
@@ -35,7 +35,7 @@ export function SignInBlockedPanel({
     );
   }
   return (
-    <Alert className="mt-6">
+    <Alert className="mt-4">
       <AlertTitle>{signInProviderUnavailableCopy.heading}</AlertTitle>
       <AlertDescription>{signInProviderUnavailableCopy.body}</AlertDescription>
     </Alert>
@@ -68,7 +68,7 @@ export function SignInStatus({
         : null;
   if (pending) {
     return (
-      <Alert className="mt-6" aria-live="polite" role="status">
+      <Alert className="mt-4" aria-live="polite" role="status">
         <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
         <AlertDescription>{pending}</AlertDescription>
       </Alert>
@@ -76,7 +76,7 @@ export function SignInStatus({
   }
   if (signOutError) {
     return (
-      <Alert className="mt-6">
+      <Alert className="mt-4">
         <AlertTitle>Sign-out did not finish.</AlertTitle>
         <AlertDescription>
           <Button className="mt-2 w-full" size="lg" variant="secondary" onClick={onRetrySignOut}>
@@ -88,7 +88,7 @@ export function SignInStatus({
   }
   if (unavailable) {
     return (
-      <Alert className="mt-6">
+      <Alert className="mt-4">
         <AlertTitle>We could not verify this session.</AlertTitle>
         <AlertDescription>
           <Button className="mt-2 w-full" size="lg" variant="secondary" onClick={onRetryValidation}>

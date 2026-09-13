@@ -11,6 +11,7 @@ import {
   parseInboundUrlIntent,
   parseShellLocation,
   shellHref,
+  type MoneyGroupId,
   type ShellFlow,
   type ShellLocation,
 } from "@/config/shell-location";
@@ -79,6 +80,7 @@ export function readHomePanel(search: URLSearchParams): ShellPanelId {
 export function homePanelHref(
   shellPath: "/" | "/dashboard",
   panel: ShellPanelId,
+  group: MoneyGroupId | null = null,
 ): string {
-  return shellHref(shellPath, { panel });
+  return shellHref(shellPath, { panel, group });
 }
