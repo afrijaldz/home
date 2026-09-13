@@ -68,7 +68,7 @@ The Codex catalog reader remains the three-page, 512-entry, 60 s shared cache. I
 
 - The full registry ERC-20/vault-underlying input set remains one stable batch on every pricing pass.
 - Positive `catalog` rows are priced in batches of 25 and retain the ≥ $100k liquidity, ≥ $10k 24 h volume market gate for the total.
-- A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
+- A Codex price is usable for display valuation when its `asOf` is within `BALANCES_PRICE_MAX_AGE_MS` (24 h); older → `price-stale`. Fresh quotes are stored once per asset in `price_observations`, and a cold instance or failed Codex batch may reuse the newest stored quote inside that bound. Trade/borrow authorization keep the 5-minute market-prices rule (decision 7).
 - Codex-enriched `wallet` rows share the catalog 25-token price batches and market gate; unknown quantity-only rows return `value: { status: "unpriced", reason: "below-market-gate" }` and never enter the total.
 - ETH and FX continue to use Coinbase exchange rates. Cash rows still get `cashValue` in their own denomination.
 - `total.status` is determined from registry rows only. Gated-in catalog values add to the amount without changing status.

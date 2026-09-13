@@ -31,6 +31,11 @@ import type {
   PriceQuote,
 } from "@/shared/balances/quotes";
 import type { BalancesRead, ReadHolding } from "./types";
+import {
+  getPriceObservationStore,
+  type PriceObservation,
+  type PriceObservationStore,
+} from "./price-observation-store";
 
 const PRICE_BATCH_SIZE = 25;
 export const BALANCES_PRICE_CONCURRENCY = 4;
@@ -54,12 +59,16 @@ type Dependencies = {
     options?: { freshnessMs?: number },
   ) => Promise<PriceQuote[]>;
   readExchangeRates?: () => Promise<ExchangeRates>;
+  priceStore?: PriceObservationStore;
+  now?: () => Date;
 };
 
 export function createBalancesPricer(dependencies: Dependencies = {}) {
   const readPrices = dependencies.readPrices ?? getCodexRawQuotes;
   const readExchangeRates = dependencies.readExchangeRates
     ?? getCoinbaseExchangeRates;
+  const priceStore = dependencies.priceStore ?? getPriceObservationStore();
+  const now = dependencies.now ?? (() => new Date());
 
   return async function priceBalances(
     read: BalancesRead,
@@ -108,7 +117,11 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
       }
     }
 
-    const prices = priceBatches.flat();
+    const prices = await persistAndRestorePrices(
+      priceBatches.flat(),
+      priceStore,
+      now(),
+    );
     return read.holdings.map((holding) =>
       priceHolding(holding, quoteCurrency, prices, rates),
     );
@@ -362,6 +375,63 @@ function uniqueInputs(
     byKey.set(input.assetKey, input);
   }
   return [...byKey.values()];
+}
+
+async function persistAndRestorePrices(
+  prices: readonly PriceQuote[],
+  store: PriceObservationStore,
+  currentTime: Date,
+): Promise<PriceQuote[]> {
+  const observations = prices.flatMap((price): PriceObservation[] =>
+    price.status === "fresh" && price.unitPrice && price.source.asOf
+      ? [{
+          assetKey: price.assetKey,
+          unitPrice: price.unitPrice,
+          asOf: price.source.asOf,
+          fetchedAt: price.source.fetchedAt,
+        }]
+      : []);
+  try {
+    await store.putMany(observations);
+  } catch {
+    // Persistence is a best-effort cross-instance fallback, never a read failure.
+  }
+
+  const fallbackKeys = prices.flatMap((price) =>
+    price.status === "fresh" ? [] : [price.assetKey]);
+  if (fallbackKeys.length === 0) return [...prices];
+
+  let stored: PriceObservation[];
+  try {
+    stored = await store.getMany(fallbackKeys);
+  } catch {
+    return [...prices];
+  }
+  const storedByKey = new Map(stored.flatMap((observation) => {
+    const asOfMs = Date.parse(observation.asOf);
+    return Number.isFinite(asOfMs) &&
+        currentTime.getTime() - asOfMs <= BALANCES_PRICE_MAX_AGE_MS
+      ? [[observation.assetKey, observation] as const]
+      : [];
+  }));
+
+  return prices.map((price) => {
+    if (price.status === "fresh") return price;
+    const observation = storedByKey.get(price.assetKey);
+    if (!observation) return price;
+    return {
+      ...price,
+      unitPrice: observation.unitPrice,
+      status: "fresh",
+      source: {
+        provider: "Codex",
+        method: "Stored price observation",
+        fetchedAt: observation.fetchedAt,
+        asOf: observation.asOf,
+        timeBasis: "provider-as-of",
+      },
+    };
+  });
 }
 
 export async function mapWithConcurrency<T, R>(
