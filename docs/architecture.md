@@ -76,7 +76,7 @@ Funding already has the full plugin shape: one provider directory, one registrat
 |---|---|---|
 | `actions` | record | a confirmed action survives reload and shows in Activity before the indexer catches up; status is derived at read time, never stored ([actions.md](actions.md)) |
 | `funding_orders` | record | a provider order and its verified receipt ([funding seam](funding-provider-seam.md)) |
-| `balance_snapshots` | observation | the last observed holdings per `(chain_id, address)`, keeping registry block provenance separate from enumeration time; invalidated by Home's own actions and CDP activity webhooks; TTL only as backstop; served as observed, with its age, when a refresh fails ([balances.md](balances.md) §8; not yet built) |
+| `balance_snapshots` | observation | the last observed holdings per `(chain_id, address)`, keeping registry block provenance separate from enumeration time; invalidated by Home's own actions and CDP activity webhooks; TTL only as backstop; served as observed, with its age, when a refresh fails ([balances.md](balances.md) §8) |
 | `schema_migrations` | — | makes `bun run db:migrate` idempotent |
 
 Every table appears in this inventory with its kind; one shared executor (`server/db/sql.ts`) serves them all. Authentication creates no rows: the SIWE challenge is a signed cookie. Country preference is a device-side record (cookie-readable for server rendering); it moves to the server only for a cross-device need. The server never caches prices per owner. A future history table is decided on its own: reconstructible chain or price history is an observation; what Home displayed or committed to at a time is a record with its own retention contract.

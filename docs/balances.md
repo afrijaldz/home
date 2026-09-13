@@ -1,6 +1,6 @@
 # Balances: one snapshot, every row, cached on the device
 
-Status: **G1 CDP-first server and G2 deletion shipped; server observation row (G3) and dust default (G4) locked, not yet built** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
+Status: **G1 CDP-first server, G2 deletion, and G3 server observation shipped; dust default (G4) locked, not yet built** (2026-09-13). Subsystem design under [architecture.md](architecture.md) (principles 2 and 5; the balances snapshot is an *observation*). Restores Phase B/C of the [balances inventory](balances-inventory-architecture.md) summary (Neon snapshot, CDP webhooks, locked Sept 9) and supersedes its Q1 Phase A (the deletion step landed 2026-09-13). Home now enumerates the wallet through CDP, resolves against registry ∪ Codex 512 ∪ wallet metadata, reads the registry at one pinned block, and prices resolved rows.
 
 ## What Jesse asked for
 
@@ -141,7 +141,7 @@ No 24 h change, no contract addresses, no source labels on rows (ui-direction). 
 
 Send, Save, Borrow, Trade calldata is issued for registry assets only, exactly as today. Catalog rows are visible everywhere and actionable nowhere. Extending Send to catalog ERC-20s is a separate product decision; nothing here blocks it.
 
-### 8. Server observation: `balance_snapshots` (G3, decided 2026-09-13, not yet built)
+### 8. Server observation: `balance_snapshots` (G3, shipped 2026-09-13)
 
 Jesse accepted one server-side balance cache as an *observation* (architecture.md principle 2): derivable, stamped with its source position, droppable, never authority for an action. It replaces the per-instance TTL caches as the server's cache; per-instance in-flight dedupe stays.
 
@@ -149,9 +149,10 @@ Jesse accepted one server-side balance cache as an *observation* (architecture.m
 create table balance_snapshots (
   chain_id     integer not null,
   address      text not null,            -- lowercase smart account; what the chain and the webhook know
-  block_number bigint not null,
-  block_hash   text not null,
-  observed_at  timestamptz not null,     -- when the read pinned its block, not when the row was written
+  block_number    bigint not null,
+  block_hash      text not null,
+  block_timestamp bigint not null,    -- unix seconds from the pinned block
+  observed_at     timestamptz not null,     -- when the read pinned its block, not when the row was written
   stale_at     timestamptz,              -- one-shot: activity seen (webhook, funding receipt)
   hot_until    timestamptz,              -- post-action window: registry re-read on every request
   holdings     jsonb not null,           -- pre-pricing holdings with provenance (registry pinned, catalog/wallet from CDP)
@@ -163,7 +164,7 @@ create table balance_snapshots (
 Rules:
 
 - **Scope.** The row is keyed by address because that is what the chain and the webhook know; the verified session decides which address a request may read (unchanged verified-scope rule). Two providers on one address share one observation.
-- **Writers touch only their columns.** An observation write is a conditional upsert on `block_number` (a newer block never loses to an older one) that writes the observation columns only. Signal writers (`/confirm`, `/handle`, the webhook, a funding receipt) touch only `stale_at` or `hot_until`.
+- **Writers touch only their columns.** An observation write is a conditional upsert on `block_number` (a newer block never loses to an older one) that writes the observation columns only. Signal writers (`/confirm`, `/handle`, the webhook, a funding receipt) touch only `stale_at` or `hot_until`. A signal before the first observation intentionally no-ops: the first read is fresh by definition, and placeholder rows are forbidden.
 - **When a read re-observes.** `hot_until > now()` → re-read the registry only (the action changed a registry asset; catalog/wallet rows keep the last enumeration). `stale_at > observed_at` or `observed_at` older than the backstop → full re-observe (registry read + CDP enumeration). Otherwise serve the row. `hot_until` is set by `POST /api/actions/:id/confirm` and `/handle` to `now() + 60 s`; `stale_at` by the CDP `wallet.activity.multi` webhook (signature-verified; duplicates are harmless because it only sets `stale_at`; it writes no amounts) and by a funding order reaching `received`; the backstop is 120 s.
 - **Serving as observed.** `fetchedAt` on the wire is `observed_at`, never the response time. If a required re-observe fails, the row is served as it was, with `stale: true` on the snapshot (additive to v3) and its coverage unchanged; the presenter shows the observation age. Never fresh, never zero.
 - **Stale maxima.** Send and Save take their maxima from the snapshot even when stale; the flow shows the observation age beside the max; the server's pinned read at `prepare` remains the authority (§Boundary).
@@ -172,7 +173,9 @@ Rules:
 
 Enumeration cost moves from "every 60 s per active user" to "once per activity event", which is what makes the all-tokens phase affordable for dusty wallets.
 
-Webhook subscription lifecycle (per fork/environment): at first sign-in, add the smart account to a `wallet.activity.multi` subscription with room (≤ 100 addresses each); read the address→subscription mapping back from CDP (an observation; thinness Q1) — a table is admitted only if CDP cannot list a subscription's addresses, and then it is a record that must appear in architecture.md's inventory; `POST /api/webhooks/cdp` verifies the HMAC over the raw body, sets `stale_at` for the address, returns 200; if registration fails the owner still works through the 120 s backstop. Payload shape and address-packing behaviour are unverified until preview.
+Webhook subscription lifecycle (per fork/environment): an operator first creates a `wallet_activity` subscription with `bun run webhooks:register -- <smart-account-address>` and stores the returned one-time secret as `CDP_WEBHOOK_SECRET`. At first authenticated balance read, Home lists subscriptions (60 s per-instance list cache) and adds the smart account to an existing `base-mainnet` subscription with room (≤ 100 addresses each); the address→subscription mapping is read back from CDP and no Home table is added. CDP's current reference documents `eventTypes`, `target`, and `labels` (`network`, comma-separated `wallet_addresses`) for subscription writes; raw-secret HMAC-SHA256 verification; a five-minute replay window; create/list/get/delete endpoints; and full-subscription `PUT` updates (not `PATCH`). `POST /api/webhooks/cdp` verifies legacy `v0` over `t.rawBody` and current `v1` over `t.h.signed-header-values.rawBody`, accepts the documented `wallet.activity` family plus the locked `wallet.activity.detected` / `wallet.activity.multi` variants, sets `stale_at`, and returns 200. Registration failures are non-fatal because the 120 s backstop remains.
+
+Unverified until preview: the production `wallet.activity.multi` delivery envelope and exact documented address fields; whether production deliveries use `wallet.activity`, `wallet.activity.detected`, or `wallet.activity.multi`; list pagination beyond the first response; and address packing/update behavior at the 100-address boundary. The implementation tolerates snake_case list fixtures, never creates subscriptions at runtime (because the create response secret must be stored by the operator), and emits a bounded failure event without addresses.
 
 ### 9. Dust hidden by default (G4, decided 2026-09-13, not yet built)
 
@@ -189,7 +192,7 @@ Additive first, deletions last. No lane deletes something another lane's consume
 | **G1 CDP-first server** (complete) | `server/balances/**`, CDP and FX moves/shims, this doc | per-owner CDP enumeration cache; registry-only pinned read; resolve to catalog/wallet rows; wallet unpriced | removed catalog multicall/decimals verification from the balances path |
 | **B2/B3 client + proof** (complete) | client selectors/query/persistence and smoke fixtures | one persisted v3 query and shared rows | — |
 | **B4/G2 deletion** (complete) | legacy `server/portfolio/**`, old routes/types/client imports | repoint any final consumers to balances-owned modules | legacy valuation/inventory/recognized paths and temporary re-export shims |
-| **G3 server observation** (after G2) | `server/balances/{snapshot-store,webhook}.ts`, migration, `/confirm` + `/handle` hot window, `POST /api/webhooks/cdp`, subscription registration, `stale` on the contract + presenter age | §8 | per-instance TTL caches |
+| **G3 server observation** (complete) | `server/balances/{snapshot-store,webhook}.ts`, migration, `/confirm` + `/handle` hot window, `POST /api/webhooks/cdp`, subscription registration, `stale` on the contract + presenter age | §8 | per-instance TTL caches |
 | **G4 dust default** (after G2) | `shared/balances/present.ts`, Balances list control, per-device preference | §9 | — |
 
 G1 moved CDP Token Balances and Coinbase FX into `server/balances/`; G2 removed the temporary re-export shims with the legacy importers. Valuation math now lives in `shared/balances/math.ts` and presentation fiat formatting in `shared/formatting/presentation-fiat.ts`. Keep unchanged: `recognized-catalog.ts`, `raw-quotes.ts`, `server/chain/rpc.ts`, `MoneyTicker`, `BalanceRow`, `CurrencyMark`, and asset-mark.
@@ -208,8 +211,8 @@ Actions remain registry-only until a separate product decision extends Send.
 |---|---|---|
 | Client `staleTime` | 15 s | refetch on focus/mount past this; visible-tab interval ~30 s |
 | Device cache TTL | 24 h | persisted owner snapshot; cleared on owner change |
-| Registry read dedupe (per instance) | 2 s | absorbs the 3 s post-action poll and multi-tab bursts |
-| CDP enumeration cache (until G3) | 60 s | per owner; replaced by the snapshot row's rules |
+| Read dedupe (per instance) | in-flight only | concurrent regions/tabs share one owner observation; no completed-value TTL |
+| CDP enumeration dedupe | in-flight only | completed enumeration lives only in `balance_snapshots` |
 | Read deadline | 4 s | shorter than the 6 s per-call RPC timeout; a timeout fails the read and the client keeps previous data |
 | Enumeration deadline | 8 s | returns collected rows with `incomplete` |
 | Hot window | 60 s | set by `/confirm` and `/handle`; registry re-read on every request |
