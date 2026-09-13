@@ -205,10 +205,12 @@ export function scheduleSdkActivation(
 function LazyConfiguredAccountProvider({
   projectId,
   baseAccountEnabled,
+  provider,
   children,
 }: {
   projectId: string;
   baseAccountEnabled: boolean;
+  provider: "cdp" | "composite";
   children: ReactNode;
 }) {
   const [active, setActive] = useState(false);
@@ -264,82 +266,28 @@ function LazyConfiguredAccountProvider({
     return <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>;
   }
 
-  return (
-    <Suspense fallback={(
-      <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>
-    )}>
-      <LazyCdpSdkProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
-        <AccountClientCapture onClient={onClient} />
-        {children}
-      </LazyCdpSdkProvider>
-    </Suspense>
+  const providerChildren = (
+    <>
+      <AccountClientCapture onClient={onClient} />
+      {children}
+    </>
   );
-}
-
-function LazyCompositeAccountProviderBridge({
-  projectId,
-  children,
-}: {
-  projectId: string;
-  children: ReactNode;
-}) {
-  const [active, setActive] = useState(false);
-  const activeClientRef = useRef<AccountWalletClient | null>(null);
-  const readyResolversRef = useRef<Array<(client: AccountWalletClient) => void>>([]);
-
-  const activate = useMemo(() => () => {
-    if (activeClientRef.current) return Promise.resolve(activeClientRef.current);
-    setActive(true);
-    return new Promise<AccountWalletClient>((resolve) => {
-      readyResolversRef.current.push(resolve);
-    });
-  }, []);
-
-  useEffect(() => scheduleSdkActivation(() => setActive(true), {
-    hasHint: hasAccountProviderHint(),
-    requestIdle: typeof window.requestIdleCallback === "function"
-      ? (callback) => {
-          const id = window.requestIdleCallback(callback, { timeout: 1_500 });
-          return () => window.cancelIdleCallback?.(id);
-        }
-      : null,
-  }), []);
-
-  const onClient = useMemo(() => (client: AccountWalletClient) => {
-    activeClientRef.current = client;
-    for (const resolve of readyResolversRef.current.splice(0)) resolve(client);
-  }, []);
-
-  const bootstrapClient = useMemo<AccountWalletClient>(() => ({
-    ...createBlockedAccountWalletClient("provider-unavailable"),
-    projectConfigured: true,
-    signInAvailability: "ready",
-    baseAccountEnabled: true,
-    isInitialized: false,
-    status: "restoring",
-    message: null,
-    requestEmailCode: async (email) => (await activate()).requestEmailCode(email),
-    verifyEmailCode: async (flowId, otp) => (await activate()).verifyEmailCode(flowId, otp),
-    signInWithBaseAccount: async (onPhase) => (await activate()).signInWithBaseAccount(onPhase),
-    retrySessionValidation: async () => {
-      const current = activeClientRef.current;
-      if (current) await current.retrySessionValidation();
-      else await activate();
-    },
-  }), [activate]);
-
-  if (!active) {
-    return <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>;
-  }
 
   return (
     <Suspense fallback={(
       <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>
     )}>
-      <LazyCompositeAccountProvider projectId={projectId}>
-        <AccountClientCapture onClient={onClient} />
-        {children}
-      </LazyCompositeAccountProvider>
+      {provider === "composite"
+        ? (
+            <LazyCompositeAccountProvider projectId={projectId}>
+              {providerChildren}
+            </LazyCompositeAccountProvider>
+          )
+        : (
+            <LazyCdpSdkProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
+              {providerChildren}
+            </LazyCdpSdkProvider>
+          )}
     </Suspense>
   );
 }
@@ -366,14 +314,22 @@ export function CdpAccountProvider({
   }
   if (projectId && baseAccountEnabled) {
     return (
-      <LazyCompositeAccountProviderBridge projectId={projectId}>
+      <LazyConfiguredAccountProvider
+        projectId={projectId}
+        baseAccountEnabled
+        provider="composite"
+      >
         {children}
-      </LazyCompositeAccountProviderBridge>
+      </LazyConfiguredAccountProvider>
     );
   }
   if (projectId) {
     return (
-      <LazyConfiguredAccountProvider projectId={projectId} baseAccountEnabled={false}>
+      <LazyConfiguredAccountProvider
+        projectId={projectId}
+        baseAccountEnabled={false}
+        provider="cdp"
+      >
         {children}
       </LazyConfiguredAccountProvider>
     );
