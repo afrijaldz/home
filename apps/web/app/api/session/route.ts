@@ -6,14 +6,13 @@ import { createSessionHandler } from "@/server/cdp/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const sessionSecret = process.env.HOME_SESSION_SECRET;
-const configured = isHomeSessionConfigured(sessionSecret);
-
+// The only handler instance that issues the CDP render hint. The shared
+// `authorizeSession` boundary used by every other `/api/*` route never does,
+// so the hint has no API authority. The gate and secret are read per request,
+// matching `server/auth/authorize.ts`, so module import order cannot pin them.
 export const GET = createSessionHandler({
   getValidator: getCdpAccessTokenValidator,
-  homeSessionSecret: sessionSecret,
-  baseAccountEnabled: configured,
-  issueCookies: configured
-    ? (session, request) => issueCdpRenderHint(sessionSecret, session, request)
-    : undefined,
+  baseAccountEnabled: () => isHomeSessionConfigured(process.env.HOME_SESSION_SECRET),
+  issueCookies: (session, request) =>
+    issueCdpRenderHint(process.env.HOME_SESSION_SECRET, session, request),
 });

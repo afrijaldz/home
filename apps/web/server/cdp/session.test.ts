@@ -168,7 +168,9 @@ describe("GET /api/session handler", () => {
         baseAccountDisabledBody,
       );
     }
-    expect(calls).toBe(2);
+    // The explicit selector is answered before CDP is consulted; only `restore`
+    // needs the profile to learn that it resolves to Base Account.
+    expect(calls).toBe(1);
   });
 
   test("restores only an unambiguous email account provider", async () => {
