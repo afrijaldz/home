@@ -205,10 +205,8 @@ describe("thin action dispatch", () => {
     }
 
     render(createElement(Probe));
-    const originalNow = Date.now;
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
-    Date.now = fake.clock.now;
     globalThis.setTimeout = ((callback: TimerHandler, delay?: number) =>
       fake.clock.setTimer(() => {
         if (typeof callback === "function") callback();
@@ -236,7 +234,6 @@ describe("thin action dispatch", () => {
       ]);
       expect(fake.pending()).toBe(0);
     } finally {
-      Date.now = originalNow;
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
       execution.reset();
