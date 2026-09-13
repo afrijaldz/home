@@ -20,9 +20,17 @@ import {
 } from "./native-base-session-client";
 import { BASE_CHAIN_ID } from "@/shared/account/session-types";
 
-export default function NativeBaseAccountBridge({ children }: { children: ReactNode }) {
+export type NativeBaseIdentity = {
+  identity: VerifiedAccountSession | null;
+  isSettled: boolean;
+  initializationError?: "provider-unavailable";
+  restore: (signal?: AbortSignal) => Promise<void>;
+  boundary: AccountWalletSdkBoundary;
+};
+
+export function useNativeBaseIdentity(): NativeBaseIdentity {
   const [identity, setIdentity] = useState<VerifiedAccountSession | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [isSettled, setIsSettled] = useState(false);
   const [initializationError, setInitializationError] = useState<
     "provider-unavailable" | undefined
   >();
@@ -33,7 +41,7 @@ export default function NativeBaseAccountBridge({ children }: { children: ReactN
     const sequence = ++restoreSequence.current;
     await Promise.resolve();
     if (signal?.aborted || sequence !== restoreSequence.current) return;
-    setIsInitialized(false);
+    setIsSettled(false);
     setInitializationError(undefined);
     try {
       const session = await restoreNativeBaseSession(fetch, signal);
@@ -45,7 +53,7 @@ export default function NativeBaseAccountBridge({ children }: { children: ReactN
       setInitializationError("provider-unavailable");
     } finally {
       if (!signal?.aborted && sequence === restoreSequence.current) {
-        setIsInitialized(true);
+        setIsSettled(true);
       }
     }
   }, []);
@@ -56,11 +64,11 @@ export default function NativeBaseAccountBridge({ children }: { children: ReactN
     return () => controller.abort();
   }, [restore]);
 
-  const sdk = useMemo<AccountWalletSdkBoundary>(() => ({
+  const boundary = useMemo<AccountWalletSdkBoundary>(() => ({
     authentication: "native-base",
     initializationError,
     retryInitialization: restore,
-    isInitialized,
+    isInitialized: isSettled,
     isSignedIn: identity !== null,
     ownerKey: identity ? nativeOwnerKey(identity) : null,
     provisionalSession: identity,
@@ -87,10 +95,16 @@ export default function NativeBaseAccountBridge({ children }: { children: ReactN
       challenges.current.clear();
       setIdentity(null);
     },
-  }), [identity, initializationError, isInitialized, restore]);
+  }), [identity, initializationError, isSettled, restore]);
+
+  return { identity, isSettled, initializationError, restore, boundary };
+}
+
+export default function NativeBaseAccountBridge({ children }: { children: ReactNode }) {
+  const { boundary } = useNativeBaseIdentity();
 
   return (
-    <AccountWalletSessionOwner sdk={sdk} baseAccountEnabled projectConfigured={false}>
+    <AccountWalletSessionOwner sdk={boundary} baseAccountEnabled projectConfigured={false}>
       {children}
     </AccountWalletSessionOwner>
   );
