@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { AccountWalletClient } from "@/client/account/cdp-client";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
-import { activityOwnerKey } from "@/client/activity/use-activity";
-import { useHomeToast } from "@/client/home/use-home-toast";
 import {
   MoneyAmountDisplay,
   MoneyConfirmSummary,
@@ -63,9 +61,7 @@ export function SavingsMoneyDialog({
   const [attemptedAction, setAttemptedAction] = useState(false);
   const [step, setStep] = useState<DialogStep>("amount");
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<{ mode: SavingsActionMode; amount: string; candidateName: string } | null>(null);
   const [openedAt] = useState(() => Date.now());
-  const { add: addToast } = useHomeToast(activityOwnerKey(session));
   const expiredPrepared = preparedAction
     ? Date.parse(preparedAction.expiresAt) <= openedAt
     : false;
@@ -77,23 +73,6 @@ export function SavingsMoneyDialog({
       ? "Deposit"
       : "Withdraw";
 
-  useEffect(() => {
-    if (!success) return;
-    addToast({
-      id: `savings:${success.mode}:${success.amount}`,
-      tone: "success",
-      role: "status",
-      onClose: () => setSuccess(null),
-      message: (
-        <div className="flex flex-col gap-1">
-          <strong className="text-sm font-medium">
-            {success.mode === "deposit" ? "Deposited" : "Withdrew"} {success.amount}
-          </strong>
-          <p className="text-xs text-muted-foreground">Save · {success.candidateName}</p>
-        </div>
-      ),
-    });
-  }, [addToast, success]);
 
   function changeAmount(value: string, source: MoneyAmountChangeSource) {
     setAmountChangeSource(source);
@@ -175,13 +154,11 @@ export function SavingsMoneyDialog({
         setStep(result.status === "failed" ? "failed" : "error");
         return;
       }
-      const confirmedAmount = confirmAmount;
       try {
         await onConfirmed?.(result);
       } catch {
         // A parent refresh failure must not relabel a dispatched action.
       }
-      setSuccess({ mode, amount: confirmedAmount, candidateName: candidate.name });
       reset();
       onClose();
     } catch {

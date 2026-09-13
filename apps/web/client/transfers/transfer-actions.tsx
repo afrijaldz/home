@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { MoneyTicker } from "@/components/money-ticker";
 import {
   useCallback,
   useEffect,
@@ -10,8 +9,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
-import { CopyableValue } from "@/components/copyable-value";
-import { formatAddress } from "@/shared/formatting";
 import {
   useAccountWallet,
   type AccountWalletClient,
@@ -24,10 +21,8 @@ import {
 } from "@/config/shell-location";
 import { markHomePerformance } from "@/client/observability/perf-marks";
 import { useOptionalHomeShellRouting } from "@/client/home/panel-routing";
-import { useHomeToast } from "@/client/home/use-home-toast";
 import { SendDialog } from "./send-dialog";
-import { formatSendConfirmAmount, getTransferAsset } from "@/shared/transfers/transfer-helpers";
-import type { ConfirmedTransfer, TransferAssetAvailability } from "@/shared/transfers/types";
+import type { TransferAssetAvailability } from "@/shared/transfers/types";
 
 const subscribeToMountedState = () => () => {};
 const mountedClientSnapshot = () => true;
@@ -63,10 +58,6 @@ export function TransferActionsForWallet({
   const routing = useOptionalHomeShellRouting();
   const [sendOpen, setSendOpen] = useState(false);
   const [modalOwner, setModalOwner] = useState<string | null>(null);
-  const [success, setSuccess] = useState<{
-    transfer: ConfirmedTransfer;
-    owner: string | null;
-  } | null>(null);
   const openedInAppRef = useRef(false);
   const mounted = useSyncExternalStore(
     subscribeToMountedState,
@@ -79,8 +70,6 @@ export function TransferActionsForWallet({
   const routeOpen = routing ? routing.state.flow === "send" : initialOpen;
   const visibleSend = modalOwner === boundary && (routing ? routeOpen : sendOpen);
   const dropPrivate = modalOwner !== null && modalOwner !== boundary;
-  const visibleSuccess = success && success.owner === boundary ? success.transfer : null;
-  const { add: addToast } = useHomeToast(boundary);
 
   useEffect(() => {
     if (boundary) markHomePerformance("action:first-interactive");
@@ -89,45 +78,16 @@ export function TransferActionsForWallet({
   useEffect(() => {
     if (!routeOpen || !boundary) return;
     const frame = window.requestAnimationFrame(() => {
-      setSuccess(null);
       setModalOwner(boundary);
       setSendOpen(true);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [boundary, routeOpen]);
 
-  useEffect(() => {
-    if (!visibleSuccess) return;
-    addToast({
-      id: `send:${visibleSuccess.transactionHash}`,
-      tone: "success",
-      role: "status",
-      onClose: () => setSuccess(null),
-      message: (
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground" aria-hidden="true">✓</span>
-          <div>
-            <strong className="text-sm font-medium">
-              Sent <MoneyTicker value={formatSendConfirmAmount(visibleSuccess.amountBaseUnits, visibleSuccess.assetId)} />
-            </strong>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {getTransferAsset(visibleSuccess.assetId)?.symbol ?? visibleSuccess.assetId} · Base ·{" "}
-              <CopyableValue
-                value={visibleSuccess.recipient}
-                display={formatAddress(visibleSuccess.recipient)}
-                valueKind="address"
-              />
-            </p>
-          </div>
-        </div>
-      ),
-    });
-  }, [addToast, visibleSuccess]);
 
   const openSend = () => {
     if (!boundary) return;
     openedInAppRef.current = true;
-    setSuccess(null);
     setModalOwner(boundary);
     setSendOpen(true);
     if (routing) routing.setFlow("send");
@@ -182,9 +142,6 @@ export function TransferActionsForWallet({
               resumeActionId={initialActionId}
               onReview={showReview}
               onInvalidResume={showFirstStep}
-              onConfirmed={(transfer) => {
-                setSuccess({ transfer, owner: boundary });
-              }}
               onClose={close}
               onClosed={finishClose}
             />,
