@@ -5,7 +5,13 @@ import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { ItemGroup } from "@/components/ui/item";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item";
 import { MoneyTicker } from "@/components/money-ticker";
 import { CurrencyMark } from "@/components/currency-mark";
 import { BalanceRow } from "@/components/finance-rows";
@@ -140,6 +146,8 @@ export function HomeMoneyGroups({
   onOpenGroup: (group: MoneyGroupPresentation["id"]) => void;
 }) {
   if (groups.length > 0) {
+    // Preview each group the snapshot presents; hidden dust rows never reach Home, and an absent
+    // group (no investments yet) stays hidden rather than showing a header and a More row.
     const hiddenKeys = new Set(hiddenRows.map((row) => row.key));
     const previewGroups = groups
       .map((group) => ({
@@ -153,11 +161,7 @@ export function HomeMoneyGroups({
           ...group,
           rows: group.rows.slice(0, HOME_MONEY_GROUP_PREVIEW_COUNT),
         }))}
-        moreGroups={new Set(
-          previewGroups
-            .filter((group) => group.rows.length > HOME_MONEY_GROUP_PREVIEW_COUNT)
-            .map((group) => group.id),
-        )}
+        moreGroups={new Set(previewGroups.map((group) => group.id))}
         onOpenGroup={onOpenGroup}
       />
     );
@@ -259,7 +263,12 @@ function IncrementalBalancesList({
         />
       ) : null}
       {active && hasMore ? (
-        <div ref={sentinelRef} className="h-px" aria-hidden="true" />
+        <div
+          ref={sentinelRef}
+          className="h-px"
+          data-balances-sentinel=""
+          aria-hidden="true"
+        />
       ) : null}
     </>
   );
@@ -293,17 +302,20 @@ function GroupedBalancesList({
           />
           {group.rows.length > 0 ? <BalancesList rows={group.rows} /> : null}
           {moreGroups.has(group.id) && onOpenGroup ? (
-            <Button
-              type="button"
+            <Item
+              render={<Button type="button" variant="ghost" />}
               size="sm"
-              variant="ghost"
-              className="ml-1"
+              className="min-h-10 flex-nowrap border-0 py-2 text-left"
               onClick={() => onOpenGroup(group.id)}
               aria-label={`More ${group.label}`}
             >
-              More
-              <ChevronRight className="size-4" aria-hidden="true" />
-            </Button>
+              <ItemContent>
+                <ItemTitle className="text-muted-foreground">More</ItemTitle>
+              </ItemContent>
+              <ItemActions className="text-muted-foreground" aria-hidden="true">
+                <ChevronRight className="size-4" />
+              </ItemActions>
+            </Item>
           ) : null}
         </section>
       ))}
@@ -321,9 +333,15 @@ function MoneyGroupHeader({
   subtotal: string | null;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm font-medium text-muted-foreground">
+    <div className="flex items-center justify-between gap-3 px-3 pt-3 pb-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
       <h3 id={id}>{label}</h3>
-      {subtotal ? <MoneyTicker value={subtotal} reserveDigits={false} /> : null}
+      {subtotal ? (
+        <MoneyTicker
+          className="text-right tracking-normal normal-case"
+          value={subtotal}
+          reserveDigits={false}
+        />
+      ) : null}
     </div>
   );
 }

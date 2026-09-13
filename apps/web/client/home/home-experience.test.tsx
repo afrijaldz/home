@@ -382,6 +382,20 @@ describe("Home shell auth and privacy", () => {
 });
 
 describe("Home shell routing and intents", () => {
+  test("a group's More row opens the panel anchored to that group; absent groups show no row", async () => {
+    render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} />);
+    await waitForVerifiedShell();
+
+    // The harness wallet holds only cash: no Investments header or More row leading nowhere.
+    expect(page().queryByRole("button", { name: "More Investments" })).toBeNull();
+    fireEvent.click(page().getByRole("button", { name: "More Cash" }));
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      "/dashboard?panel=balances&group=cash",
+    );
+    expect(page().getByRole("heading", { name: "Your money" })).toBeTruthy();
+  });
+
   test("keeps panel selection and browser history synchronized", async () => {
     render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} />);
     await waitForVerifiedShell();

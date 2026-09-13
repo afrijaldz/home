@@ -229,12 +229,15 @@ function presentBreakdown(
   if (investmentsSubtotal) {
     breakdown.push({ id: "investments", label: "Investments", value: investmentsSubtotal });
   }
-  const vaultShares = snapshot.holdings.filter((holding) => holding.kind === "vault-share");
-  const savedSubtotal = vaultShares.length > 0
-    ? presentHoldingsSubtotal(vaultShares, snapshot)
-    : null;
+  // Saved shares the quote-currency subtotal rule with Cash and Investments (omitted, never 0).
+  const savedSubtotal = presentSavedSubtotal(snapshot);
   if (savedSubtotal) breakdown.push({ id: "saved", label: "Saved", value: savedSubtotal });
   return breakdown;
+}
+
+export function presentSavedSubtotal(snapshot: BalancesSnapshot): string | null {
+  const vaultShares = snapshot.holdings.filter((holding) => holding.kind === "vault-share");
+  return vaultShares.length > 0 ? presentHoldingsSubtotal(vaultShares, snapshot) : null;
 }
 
 function presentCash(entry: CashSelection, snapshot: BalancesSnapshot): BalanceRowModel {
