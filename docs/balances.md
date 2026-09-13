@@ -132,7 +132,7 @@ type BalanceRowModel = {
 
 Anatomy, identical for every source: `[32 px mark] name / secondary … primary`. Cash: `[flag] US dollar … $1,234.56` (from `cashValue`). Priced asset: `[image] Aerodrome / 12.5 AERO … $18.20`. Unpriced: `[image] Foo … 12.5 FOO` (muted). Cash unavailable: `Unavailable` in destructive tone. Loading: skeleton rows from a real `loading` state, not the `"Updating…"` sentinel.
 
-Membership rules (today's, made explicit): cash rows (canonical USD + selected local) always render, including at zero and when `unavailable`; non-cash rows render only with an authoritative positive balance — an `unavailable` non-cash registry row is **hidden** and surfaces through `coverage.registry: "partial"` → total status label, never as a wall of error rows; vault shares are never rows (they count in `total` and appear in Save via `selectVaultPositions`). Ordering: cash (selected local, canonical USD, other cash) → priced by value desc → unpriced by name → dust (< 1 cent) last (hidden by default once §9 lands). The Home teaser is the first four rows of the same order, catalog included. Formatting stays in `shared/formatting` and `valuation-format.ts`.
+Membership rules (today's, made explicit): cash rows (canonical USD + selected local) always render, including at zero and when `unavailable`; non-cash rows render only with an authoritative positive balance — an `unavailable` non-cash registry row is **hidden** and surfaces through `coverage.registry: "partial"` → total status label, never as a wall of error rows; vault shares are never rows (they count in `total` and appear in Save via `selectVaultPositions`). Ordering: cash (selected local, canonical USD, other cash) → priced by value desc → unpriced by name → dust (< 1 cent) last (hidden by default once §9 lands). The Home teaser is the first four rows of the same order, catalog included. Formatting stays in `shared/formatting`.
 
 No 24 h change, no contract addresses, no source labels on rows (ui-direction). Rows are not tappable in this pass (they are not today).
 
@@ -191,7 +191,7 @@ Additive first, deletions last. No lane deletes something another lane's consume
 | **G3 server observation** (after G2) | `server/balances/{snapshot-store,webhook}.ts`, migration, `/confirm` + `/handle` hot window, `POST /api/webhooks/cdp`, subscription registration, `stale` on the contract + presenter age | §8 | per-instance TTL caches |
 | **G4 dust default** (after G2) | `shared/balances/present.ts`, Balances list control, per-device preference | §9 | — |
 
-G1 moved CDP Token Balances and Coinbase FX into `server/balances/`; G2 removed the temporary re-export shims with the legacy importers. Keep unchanged: `recognized-catalog.ts`, `raw-quotes.ts`, `valuation-math.ts`, `valuation-format.ts`, `server/chain/rpc.ts`, `MoneyTicker`, `BalanceRow`, `CurrencyMark`, and asset-mark.
+G1 moved CDP Token Balances and Coinbase FX into `server/balances/`; G2 removed the temporary re-export shims with the legacy importers. Valuation math now lives in `shared/balances/math.ts` and presentation fiat formatting in `shared/formatting/presentation-fiat.ts`. Keep unchanged: `recognized-catalog.ts`, `raw-quotes.ts`, `server/chain/rpc.ts`, `MoneyTicker`, `BalanceRow`, `CurrencyMark`, and asset-mark.
 
 ## Next
 

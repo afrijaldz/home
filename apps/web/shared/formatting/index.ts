@@ -1,5 +1,10 @@
 export { formatAddress, isAddress } from "./address";
 export {
+  formatPresentationFiat,
+  presentationCurrencyName,
+  presentationCurrencySymbol,
+} from "./presentation-fiat";
+export {
   MONEY_CHANGE_COLOR_TOKENS,
   formatChartPrice,
   formatBasisPoints,

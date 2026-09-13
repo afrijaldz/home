@@ -1,5 +1,5 @@
 import { presentationRegions, type RegionId } from "@/config/regions";
-import { presentationCurrencySymbol } from "@/shared/portfolio/valuation-format";
+import { presentationCurrencySymbol } from "@/shared/formatting";
 
 const integerPattern = /^(?:0|[1-9]\d*)$/;
 const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;

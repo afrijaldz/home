@@ -23,7 +23,7 @@ import {
   multiplyFractions,
   roundFractionPreservingPositive,
   type Fraction,
-} from "@/shared/portfolio/valuation-math";
+} from "@/shared/balances/math";
 import type {
   FxQuote,
   NativeEthQuote,

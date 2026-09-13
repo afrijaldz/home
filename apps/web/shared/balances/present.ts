@@ -1,10 +1,10 @@
 import type { FiatCurrencyCode } from "@/config/regions";
-import { formatPresentationTokenAmount } from "@/shared/formatting";
 import {
   formatPresentationFiat,
+  formatPresentationTokenAmount,
   presentationCurrencyName,
-} from "@/shared/portfolio/valuation-format";
-import { exactDecimalToFraction } from "@/shared/portfolio/valuation-math";
+} from "@/shared/formatting";
+import { exactDecimalToFraction } from "@/shared/balances/math";
 import { selectCash, selectTotal, type CashSelection } from "./select";
 import type { BalancesSnapshot, BalancesState, ExactDecimal, Holding } from "./types";
 

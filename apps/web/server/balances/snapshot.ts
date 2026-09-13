@@ -12,7 +12,7 @@ import {
   addFractions,
   exactDecimalToFraction,
   roundFractionPreservingPositive,
-} from "@/shared/portfolio/valuation-math";
+} from "@/shared/balances/math";
 import type { BalancesRead } from "./types";
 
 export function assembleBalancesSnapshot({
