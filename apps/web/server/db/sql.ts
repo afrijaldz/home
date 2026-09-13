@@ -67,7 +67,7 @@ function wrapQueryable(
       throwIfSqlAborted(options.signal);
       const driverResult = await queryable.query(text, values);
       throwIfSqlAborted(options.signal);
-      const result = Array.isArray(driverResult) ? driverResult.at(-1) : driverResult;
+      const result = lastDriverResult(driverResult);
       const rows = result?.rows ?? [];
       return { rows: rows as T[], rowCount: result?.rowCount ?? rows.length };
     },
@@ -129,8 +129,10 @@ export function createPostgresSqlExecutor(
       throwIfSqlAborted(signal);
       await client.query("BEGIN");
       if (schema && schemaName) {
-        const existing = await client.query("SELECT 1 FROM pg_namespace WHERE nspname = $1", [schemaName]);
-        if (existing.rows.length !== 1) throw new Error(`PostgreSQL schema ${schemaName} does not exist`);
+        const existing = lastDriverResult(
+          await client.query("SELECT 1 FROM pg_namespace WHERE nspname = $1", [schemaName]),
+        );
+        if (existing?.rows?.length !== 1) throw new Error(`PostgreSQL schema ${schemaName} does not exist`);
         await client.query(`SET LOCAL search_path TO ${schema}`);
       }
       const result = await fn(tx);
@@ -177,6 +179,12 @@ export function createPostgresSqlExecutor(
       if (pool) await pool.end();
     },
   };
+}
+
+function lastDriverResult(
+  result: DriverQueryResult | DriverQueryResult[],
+): DriverQueryResult | undefined {
+  return Array.isArray(result) ? result.at(-1) : result;
 }
 
 function throwIfSqlAborted(signal: AbortSignal | undefined): void {
