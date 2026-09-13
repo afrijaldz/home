@@ -84,7 +84,6 @@ export function TransferActionsForWallet({
     return () => window.cancelAnimationFrame(frame);
   }, [boundary, routeOpen]);
 
-
   const openSend = () => {
     if (!boundary) return;
     openedInAppRef.current = true;
