@@ -141,16 +141,20 @@ describe("Base Account handle reconciliation", () => {
     expect(calls).toHaveLength(2);
   });
 
-  test("returns unavailable when the request is aborted", async () => {
+  test("a caller abort returns unavailable without opening the circuit", async () => {
     const controller = new AbortController();
     controller.abort();
-    const { calls, fetchImpl } = fixtureFetch(() => {
-      throw new DOMException("aborted", "AbortError");
+    let aborted = true;
+    const { calls, fetchImpl } = fixtureFetch((handle) => {
+      if (aborted) throw new DOMException("aborted", "AbortError");
+      return rpcResult(handle, { status: 100 });
     });
     const resolver = createActionHandleResolver({ fetchImpl });
 
     expect(await resolver(action(), controller.signal)).toEqual({ status: "unavailable" });
-    expect(calls).toHaveLength(1);
+    aborted = false;
+    expect(await resolver(action())).toEqual({ status: "pending" });
+    expect(calls).toHaveLength(2);
   });
 
   test("skips a legacy UUID handle without fetching", async () => {

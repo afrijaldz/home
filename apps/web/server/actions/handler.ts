@@ -78,8 +78,7 @@ export function createGetActionHandler(dependencies: {
             route: "/api/actions/:id",
           })
         : row;
-      const receiptSignal = row.transaction_hash ? deadline.signal : request.signal;
-      const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, receiptSignal);
+      const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, request.signal);
       return privateJson(await presentAction(reconciled, owner, receipt, now), 200);
     } finally {
       deadline.dispose();
@@ -215,8 +214,8 @@ export function createListActionsHandler(dependencies: {
               route: "/api/actions",
             })
           : row;
-        const receiptSignal = row.transaction_hash ? deadline.signal : request.signal;
-        const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, receiptSignal);
+        // Receipt reads keep the request signal and the reader's own timeout; only reconciliation is capped by the deadline.
+        const receipt = await readRowReceipt(reconciled, dependencies.readReceipt, request.signal);
         return presentAction(reconciled, owner, receipt, now);
       }));
       return privateJson({ actions } satisfies ListActionsResponse, 200);

@@ -42,9 +42,9 @@ export function createActionHandleResolver(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
     throw new Error("The Base Account status timeout must be 1-10000ms.");
   }
-  const rpcUrl = resolveBaseRpcUrl(
-    options.walletRpcUrl ?? process.env.BASE_ACCOUNT_STATUS_RPC_URL ?? DEFAULT_STATUS_RPC_URL,
-  );
+  const configuredUrl = (options.walletRpcUrl ?? process.env.BASE_ACCOUNT_STATUS_RPC_URL)?.trim() || DEFAULT_STATUS_RPC_URL;
+  // Resolved lazily so a bad optional override degrades to "unavailable" instead of failing the route at load.
+  let rpcUrl: string | null = null;
   const now = options.now ?? Date.now;
   let circuitOpenUntil = 0;
   const handleBackoffs = new Map<string, number>();
@@ -74,6 +74,7 @@ export function createActionHandleResolver(
       }
 
       const handle = row.provider_handle;
+      rpcUrl ??= resolveBaseRpcUrl(configuredUrl);
       const currentTime = now();
       if (currentTime < circuitOpenUntil) return { status: "unavailable" };
       const handleBackoffUntil = handleBackoffs.get(handle) ?? 0;
@@ -108,6 +109,8 @@ export function createActionHandleResolver(
             signal: controller.signal,
           });
         } catch {
+          // A caller abort says nothing about provider health; only our own timeout or a transport failure trips the breaker.
+          if (externalSignal?.aborted) return { status: "unavailable" };
           circuitOpenUntil = now() + CIRCUIT_BREAKER_MS;
           backoff(handle, now() + UNAVAILABLE_BACKOFF_MS);
           return { status: "unavailable" };
