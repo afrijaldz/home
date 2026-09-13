@@ -15,15 +15,34 @@ function CompositeAccountBridge({ children }: { children: ReactNode }) {
   const cdp = useCdpSdkBoundary();
   const native = useNativeBaseIdentity();
   const cdpSignOutInFlight = useRef(false);
-  const sdk = useMemo(() => composeSdkBoundaries({
-    cdp,
-    native,
-    clearNative: native.boundary.signOut,
-    cdpSignOut: cdp.signOut,
-  }), [cdp, native]);
+  const emailSwitchInFlight = useRef(false);
+  const sdk = useMemo(() => {
+    const composed = composeSdkBoundaries({
+      cdp,
+      native,
+      clearNative: native.boundary.signOut,
+      cdpSignOut: cdp.signOut,
+    });
+    return {
+      ...composed,
+      verifyEmailOTP: async (...args: Parameters<typeof composed.verifyEmailOTP>) => {
+        emailSwitchInFlight.current = true;
+        try {
+          await composed.verifyEmailOTP(...args);
+        } finally {
+          emailSwitchInFlight.current = false;
+        }
+      },
+    };
+  }, [cdp, native]);
 
   useEffect(() => {
-    if (native.identity === null || !cdp.isSignedIn || cdpSignOutInFlight.current) return;
+    if (
+      native.identity === null ||
+      !cdp.isSignedIn ||
+      cdpSignOutInFlight.current ||
+      emailSwitchInFlight.current
+    ) return;
     cdpSignOutInFlight.current = true;
     void cdp.signOut()
       .catch(() => {})
