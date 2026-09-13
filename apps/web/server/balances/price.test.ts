@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createCodexRawQuotesReader } from "@/server/market-data/codex/raw-quotes";
 import { BALANCES_PRICE_MAX_AGE_MS } from "@/shared/balances/types";
 import type { PriceQuote } from "@/shared/balances/quotes";
-import { createBalancesPricer } from "./price";
+import {
+  BALANCES_PRICE_CONCURRENCY,
+  createBalancesPricer,
+  mapWithConcurrency,
+} from "./price";
 import type { BalancesRead, ReadHolding } from "./types";
 
 const source = {
@@ -103,6 +107,12 @@ function quote(
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 function rates(includeEur = true) {
   return {
     fetchedAt: source.fetchedAt,
@@ -138,6 +148,57 @@ function rates(includeEur = true) {
 }
 
 describe("balances pricing", () => {
+  test("bounds price batch concurrency at four and preserves result order", async () => {
+    const gates = Array.from({ length: 6 }, () => deferred<number>());
+    let active = 0;
+    let maximum = 0;
+    const pending = mapWithConcurrency(
+      [0, 1, 2, 3, 4, 5],
+      BALANCES_PRICE_CONCURRENCY,
+      async (value) => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        const result = await gates[value]!.promise;
+        active -= 1;
+        return result;
+      },
+    );
+
+    await Promise.resolve();
+    expect(active).toBe(4);
+    gates[3]!.resolve(30);
+    await Promise.resolve();
+    gates[1]!.resolve(10);
+    await Promise.resolve();
+    expect(maximum).toBe(4);
+    for (const [index, gate] of gates.entries()) gate.resolve(index * 10);
+    await expect(pending).resolves.toEqual([0, 10, 20, 30, 40, 50]);
+  });
+
+  test("isolates one failed Codex batch without losing other batch prices", async () => {
+    const rows = Array.from({ length: 26 }, (_, index) => holding(
+      `0x${(index + 1).toString(16).padStart(40, "0")}`,
+      `catalog:${index}`,
+      "catalog",
+    ));
+    let calls = 0;
+    const price = createBalancesPricer({
+      readPrices: async (inputs) => {
+        calls += 1;
+        if (calls === 2) throw new Error("one batch failed");
+        return [...inputs].reverse().map((input) => quote(input.assetKey, "fresh"));
+      },
+      readExchangeRates: async () => rates(),
+    });
+
+    const result = await price({ ...read, holdings: rows }, "US");
+    expect(calls).toBe(2);
+    expect(result.slice(0, 25).every(({ value }) => value.status === "priced")).toBeTrue();
+    expect(result[25]?.value).toEqual({
+      status: "unpriced",
+      reason: "price-unavailable",
+    });
+  });
   test("applies the catalog gate, stale reason, and cash denomination", async () => {
     const price = createBalancesPricer({
       readPrices: async (inputs) => inputs.map((input) =>

@@ -12,7 +12,12 @@ import { priceBalances as defaultPriceBalances } from "./price";
 import { readBalances as defaultReadBalances } from "./read";
 import { resolveBalances as defaultResolveBalances } from "./resolve";
 import { assembleBalancesSnapshot } from "./snapshot";
-import { emitServerEvent } from "@/server/observability/log";
+import { emitServerEvent, writeObservabilityEvent } from "@/server/observability/log";
+import type {
+  BalancesReadDurations,
+  BalancesReadOutcome,
+  ObservabilityEvent,
+} from "@/server/observability/schema";
 import {
   getBalanceSnapshotStore,
   type BalanceSnapshotRow,
@@ -33,6 +38,7 @@ type Dependencies = {
   enumerateBalances?: (
     owner: PortfolioAddress,
     signal?: AbortSignal,
+    cursor?: string | null,
   ) => Promise<BalancesEnumeration>;
   readBalances?: (
     universe: BalancesUniverse,
@@ -45,10 +51,19 @@ type Dependencies = {
   ) => Promise<BalancesRead>;
   priceBalances?: (read: BalancesRead, region: RegionId) => Promise<Holding[]>;
   now?: () => Date;
+  nowMs?: () => number;
   backstopMs?: number;
+  log?: (event: ObservabilityEvent) => unknown;
 };
 
-type ObservedResult = { read: BalancesRead; stale: boolean };
+type ObservedResult = {
+  read: BalancesRead;
+  stale: boolean;
+  outcome: Exclude<BalancesReadOutcome, "error">;
+  durationMs: Omit<BalancesReadDurations, "price" | "total">;
+};
+
+type ObservationDurations = ObservedResult["durationMs"];
 
 /** Persistent observation selection with per-instance, per-owner in-flight dedupe. */
 export function createBalancesService(dependencies: Dependencies = {}) {
@@ -59,7 +74,9 @@ export function createBalancesService(dependencies: Dependencies = {}) {
   const resolveBalances = dependencies.resolveBalances ?? defaultResolveBalances;
   const priceBalances = dependencies.priceBalances ?? defaultPriceBalances;
   const now = dependencies.now ?? (() => new Date());
+  const nowMs = dependencies.nowMs ?? (() => Date.now());
   const backstopMs = dependencies.backstopMs ?? BALANCES_BACKSTOP_MS;
+  const log = dependencies.log ?? writeObservabilityEvent;
   const inFlight = new Map<string, Promise<ObservedResult>>();
 
   async function getObserved(owner: PortfolioAddress): Promise<ObservedResult> {
@@ -74,9 +91,11 @@ export function createBalancesService(dependencies: Dependencies = {}) {
   }
 
   async function selectObservation(owner: PortfolioAddress): Promise<ObservedResult> {
+    const durationMs = emptyObservationDurations();
     let row: BalanceSnapshotRow | null = null;
     try {
-      row = await store.get(BALANCES_CHAIN_ID, owner);
+      row = await timeStage(nowMs, durationMs, "store-read", () =>
+        store.get(BALANCES_CHAIN_ID, owner));
     } catch {
       observeStoreFailure("BALANCE_STORE_READ_FAILED");
     }
@@ -91,21 +110,38 @@ export function createBalancesService(dependencies: Dependencies = {}) {
     );
     const expired = row !== null &&
       current.getTime() - Date.parse(row.observedAt) > backstopMs;
+    const needsResume = row?.enumerationCursor !== null &&
+      row?.enumerationCursor !== undefined;
 
-    if (row && !hot && !signaled && !expired) {
-      return { read: readFromRow(row), stale: false };
+    if (row && !hot && !signaled && !expired && !needsResume) {
+      return {
+        read: readFromRow(row),
+        stale: false,
+        outcome: "served-row",
+        durationMs,
+      };
     }
 
     try {
-      const observed = hot && row && !signaled && !expired
-        ? await observeRegistryOnly(owner, row)
-        : await observeFull(owner);
+      const registryOnly = Boolean(hot && row && !signaled && !expired && !needsResume);
+      const observed = registryOnly
+        ? await observeRegistryOnly(owner, row!, durationMs)
+        : await observeFull(owner, row, durationMs);
       try {
-        const wrote = await store.putObservation(observationFromRead(owner, observed));
+        const wrote = await timeStage(nowMs, durationMs, "store-write", () =>
+          store.putObservation(observationFromRead(owner, observed)));
         if (!wrote) {
           try {
-            const winner = await store.get(BALANCES_CHAIN_ID, owner);
-            if (winner) return { read: readFromRow(winner), stale: false };
+            const winner = await timeStage(nowMs, durationMs, "store-read", () =>
+              store.get(BALANCES_CHAIN_ID, owner));
+            if (winner) {
+              return {
+                read: readFromRow(winner),
+                stale: false,
+                outcome: registryOnly ? "registry-only" : "full",
+                durationMs,
+              };
+            }
           } catch {
             observeStoreFailure("BALANCE_STORE_READ_FAILED");
           }
@@ -113,32 +149,61 @@ export function createBalancesService(dependencies: Dependencies = {}) {
       } catch {
         observeStoreFailure("BALANCE_STORE_WRITE_FAILED");
       }
-      return { read: observed, stale: false };
+      return {
+        read: observed,
+        stale: false,
+        outcome: registryOnly ? "registry-only" : "full",
+        durationMs,
+      };
     } catch (error) {
       if (!row) throw error;
-      return { read: readFromRow(row), stale: true };
+      return {
+        read: readFromRow(row),
+        stale: true,
+        outcome: "stale-fallback",
+        durationMs,
+      };
     }
   }
 
-  async function observeFull(owner: PortfolioAddress): Promise<BalancesRead> {
-    const universe = await readUniverse();
+  async function observeFull(
+    owner: PortfolioAddress,
+    row: BalanceSnapshotRow | null,
+    durationMs: ObservationDurations,
+  ): Promise<BalancesRead> {
+    const universeRequest = readUniverse();
+    const registryRequest = timeStage(nowMs, durationMs, "registry-read", async () =>
+      readBalances(await universeRequest, owner));
+    const enumerationRequest = timeStage(nowMs, durationMs, "enumerate", () =>
+      enumerateBalances(owner, undefined, row?.enumerationCursor));
     const [registryRead, enumeration] = await Promise.all([
-      readBalances(universe, owner),
-      enumerateBalances(owner),
+      registryRequest,
+      enumerationRequest,
     ]);
-    return resolveBalances(registryRead, enumeration);
+    const resolved = await timeStage(nowMs, durationMs, "resolve", () =>
+      resolveBalances(registryRead, enumeration));
+    const resumed = row?.enumerationCursor
+      ? mergeResumedHoldings(resolved, row, enumeration)
+      : resolved;
+    return {
+      ...resumed,
+      enumerationCursor: enumeration.status === "complete"
+        ? null
+        : enumeration.nextCursor,
+    };
   }
 
   async function observeRegistryOnly(
     owner: PortfolioAddress,
     row: BalanceSnapshotRow,
+    durationMs: ObservationDurations,
   ): Promise<BalancesRead> {
-    const universe = await readUniverse();
-    const registryRead = await readBalances(universe, owner);
-    const withEnrichment = await resolveBalances(registryRead, {
-      status: "unavailable",
-      rows: [],
+    const registryRead = await timeStage(nowMs, durationMs, "registry-read", async () => {
+      const universe = await readUniverse();
+      return readBalances(universe, owner);
     });
+    const withEnrichment = await timeStage(nowMs, durationMs, "resolve", () =>
+      resolveBalances(registryRead, unavailableEnumeration()));
     return {
       ...withEnrichment,
       holdings: [
@@ -149,6 +214,7 @@ export function createBalancesService(dependencies: Dependencies = {}) {
         registry: withEnrichment.coverage.registry,
         catalog: row.coverage.catalog,
       },
+      enumerationCursor: row.enumerationCursor,
     };
   }
 
@@ -158,15 +224,38 @@ export function createBalancesService(dependencies: Dependencies = {}) {
     signal?: AbortSignal,
   ): Promise<BalancesSnapshot> {
     void signal;
-    const observed = await getObserved(owner);
-    const holdings = await priceBalances(observed.read, region);
-    return assembleBalancesSnapshot({
-      owner,
-      region,
-      read: observed.read,
-      holdings,
-      stale: observed.stale,
-    });
+    const startedAt = nowMs();
+    let coverage: Extract<ObservabilityEvent, { kind: "balances-read" }>["coverage"] = {
+      registry: "unknown",
+      catalog: "unknown",
+    };
+    try {
+      const observed = await getObserved(owner);
+      coverage = observed.read.coverage;
+      const priceStartedAt = nowMs();
+      const holdings = await priceBalances(observed.read, region);
+      const priceDuration = Math.max(0, nowMs() - priceStartedAt);
+      const snapshot = assembleBalancesSnapshot({
+        owner,
+        region,
+        read: observed.read,
+        holdings,
+        stale: observed.stale,
+      });
+      emitBalancesRead(log, observed.outcome, {
+        ...observed.durationMs,
+        price: priceDuration,
+        total: Math.max(0, nowMs() - startedAt),
+      }, coverage);
+      return snapshot;
+    } catch (error) {
+      emitBalancesRead(log, "error", {
+        ...emptyObservationDurations(),
+        price: 0,
+        total: Math.max(0, nowMs() - startedAt),
+      }, coverage);
+      throw error;
+    }
   };
 }
 
@@ -183,9 +272,91 @@ function observationFromRead(
     blockHash: read.block.hash,
     blockTimestamp: read.block.timestamp,
     observedAt: read.observedAt,
+    enumerationCursor: read.enumerationCursor ?? null,
     holdings: read.holdings,
     coverage: read.coverage,
   };
+}
+
+function mergeResumedHoldings(
+  resolved: BalancesRead,
+  row: BalanceSnapshotRow,
+  enumeration: BalancesEnumeration,
+): BalancesRead {
+  const holdings = new Map(
+    row.holdings
+      .filter((holding) => holding.source !== "registry")
+      .map((holding) => [holding.key, holding]),
+  );
+  for (const holding of resolved.holdings) {
+    if (holding.source !== "registry") holdings.set(holding.key, holding);
+  }
+  return {
+    ...resolved,
+    holdings: [
+      ...resolved.holdings.filter((holding) => holding.source === "registry"),
+      ...holdings.values(),
+    ],
+    coverage: {
+      registry: resolved.coverage.registry,
+      catalog: enumeration.status === "unavailable"
+        ? row.coverage.catalog
+        : resolved.coverage.catalog,
+    },
+  };
+}
+
+function unavailableEnumeration(): BalancesEnumeration {
+  return {
+    status: "unavailable",
+    rows: [],
+    nextCursor: null,
+    pagesRead: 0,
+    durationMs: 0,
+  };
+}
+
+function emptyObservationDurations(): ObservationDurations {
+  return {
+    "store-read": 0,
+    enumerate: 0,
+    "registry-read": 0,
+    resolve: 0,
+    "store-write": 0,
+  };
+}
+
+async function timeStage<T, K extends keyof ObservationDurations>(
+  nowMs: () => number,
+  durations: ObservationDurations,
+  stage: K,
+  run: () => Promise<T>,
+): Promise<T> {
+  const startedAt = nowMs();
+  try {
+    return await run();
+  } finally {
+    durations[stage] += Math.max(0, nowMs() - startedAt);
+  }
+}
+
+function emitBalancesRead(
+  log: (event: ObservabilityEvent) => unknown,
+  outcome: BalancesReadOutcome,
+  durationMs: BalancesReadDurations,
+  coverage: Extract<ObservabilityEvent, { kind: "balances-read" }>["coverage"],
+): void {
+  try {
+    log({
+      kind: "balances-read",
+      route: "/api/balances",
+      outcome,
+      durationMs,
+      coverage,
+    });
+  } catch {
+    // Observability never changes balance reads.
+  }
 }
 
 function observeStoreFailure(code: "BALANCE_STORE_READ_FAILED" | "BALANCE_STORE_WRITE_FAILED"): void {
@@ -207,5 +378,6 @@ function readFromRow(row: BalanceSnapshotRow): BalancesRead {
     observedAt: row.observedAt,
     holdings: row.holdings,
     coverage: row.coverage,
+    enumerationCursor: row.enumerationCursor,
   };
 }

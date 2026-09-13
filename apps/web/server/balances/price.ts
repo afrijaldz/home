@@ -33,6 +33,7 @@ import type {
 import type { BalancesRead, ReadHolding } from "./types";
 
 const PRICE_BATCH_SIZE = 25;
+export const BALANCES_PRICE_CONCURRENCY = 4;
 const LIQUIDITY_GATE = {
   numerator: BigInt(100_000),
   denominator: BigInt(1),
@@ -80,21 +81,23 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
         )
         .map(pricingInput),
     );
-    const priceBatches: PriceQuote[][] = [];
+    const inputBatches: CodexRawQuoteInput[][] = [];
 
     if (registryInputs.length > 0) {
-      priceBatches.push(await readPriceBatch(readPrices, registryInputs));
+      inputBatches.push(registryInputs);
     }
     for (
       let index = 0;
       index < discoveredInputs.length;
       index += PRICE_BATCH_SIZE
     ) {
-      priceBatches.push(await readPriceBatch(
-        readPrices,
-        discoveredInputs.slice(index, index + PRICE_BATCH_SIZE),
-      ));
+      inputBatches.push(discoveredInputs.slice(index, index + PRICE_BATCH_SIZE));
     }
+    const priceBatches = await mapWithConcurrency(
+      inputBatches,
+      BALANCES_PRICE_CONCURRENCY,
+      (inputs) => readPriceBatch(readPrices, inputs),
+    );
 
     let rates: ExchangeRates | null = null;
     if (read.holdings.some(positivePricingAmount)) {
@@ -359,6 +362,27 @@ function uniqueInputs(
     byKey.set(input.assetKey, input);
   }
   return [...byKey.values()];
+}
+
+export async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  map: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await map(values[index]!, index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 async function readPriceBatch(

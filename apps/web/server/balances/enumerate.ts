@@ -29,9 +29,10 @@ export function createBalancesEnumerator(dependencies: Dependencies = {}) {
   return async function enumerateBalances(
     owner: PortfolioAddress,
     callerSignal?: AbortSignal,
+    cursor?: string | null,
   ): Promise<BalancesEnumeration> {
     void callerSignal;
-    const key = owner.toLowerCase();
+    const key = `${owner.toLowerCase()}:${cursor ?? "start"}`;
     const existing = inFlight.get(key);
     if (existing) return existing;
     const pending = runEnumeration(
@@ -39,6 +40,7 @@ export function createBalancesEnumerator(dependencies: Dependencies = {}) {
       owner.toLowerCase() as PortfolioAddress,
       deadlineMs,
       log,
+      cursor,
     ).finally(() => {
       if (inFlight.get(key) === pending) inFlight.delete(key);
     });
@@ -54,8 +56,10 @@ async function runEnumeration(
   owner: PortfolioAddress,
   deadlineMs: number,
   log: (event: ObservabilityEvent) => unknown,
+  cursor?: string | null,
 ): Promise<BalancesEnumeration> {
   const controller = new AbortController();
+  const startedAt = Date.now();
   const timer = setTimeout(
     () => controller.abort("balances-enumeration-deadline"),
     deadlineMs,
@@ -63,6 +67,7 @@ async function runEnumeration(
   try {
     const listed = await listBalances({
       address: owner,
+      ...(cursor ? { pageToken: cursor } : {}),
       signal: controller.signal,
     });
     const result: BalancesEnumeration = {
@@ -74,17 +79,33 @@ async function runEnumeration(
         ...(row.symbol ? { symbol: row.symbol } : {}),
         ...(row.decimals !== undefined ? { decimals: row.decimals } : {}),
       })),
+      nextCursor: listed.complete ? null : listed.nextPageToken,
+      pagesRead: listed.pagesRead,
+      durationMs: listed.durationMs,
     };
     if (result.status === "incomplete") {
-      emitEnumerationEvent(log, "incomplete", "partial");
+      emitEnumerationEvent(
+        log,
+        "incomplete",
+        "partial",
+        result.pagesRead,
+        result.durationMs,
+      );
     }
     return result;
   } catch (error) {
     const reason = error instanceof CdpTokenBalancesError
       ? error.code
       : "upstream-error";
-    emitEnumerationEvent(log, "unavailable", reason);
-    return { status: "unavailable", rows: [] };
+    const durationMs = Date.now() - startedAt;
+    emitEnumerationEvent(log, "unavailable", reason, 0, durationMs);
+    return {
+      status: "unavailable",
+      rows: [],
+      nextCursor: cursor ?? null,
+      pagesRead: 0,
+      durationMs,
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -96,6 +117,8 @@ function emitEnumerationEvent(
   reason: Extract<ObservabilityEvent, {
     kind: "portfolio-balance-source";
   }>["reason"],
+  pageCount: number,
+  durationMs: number,
 ): void {
   try {
     log({
@@ -105,6 +128,8 @@ function emitEnumerationEvent(
       stage: "inventory",
       outcome,
       reason,
+      pageCount,
+      durationMs,
     });
   } catch {
     // Observability never changes enumeration.

@@ -46,7 +46,7 @@ function enumeration(
   rows: BalancesEnumeration["rows"],
   status: BalancesEnumeration["status"] = "complete",
 ): BalancesEnumeration {
-  return { status, rows };
+  return { status, rows, nextCursor: null, pagesRead: 1, durationMs: 1 };
 }
 
 describe("balances resolution", () => {
