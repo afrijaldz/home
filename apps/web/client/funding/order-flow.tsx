@@ -21,6 +21,7 @@ import {
   MoneyAmountDisplay,
   MoneyModalFooter,
   MoneyNumpad,
+  type MoneyAmountChangeSource,
 } from "@/client/money-modal";
 import modal from "@/client/money-modal/money-modal.module.css";
 import styles from "./add-money.module.css";
@@ -122,6 +123,8 @@ export function FundingOrderFlow({
 }) {
   const [method, setMethod] = useState(binding.paymentMethods[0]?.id ?? "");
   const [amount, setAmount] = useState("");
+  const [amountChangeSource, setAmountChangeSource] =
+    useState<MoneyAmountChangeSource>("programmatic");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [order, setOrder] = useState<FundingOrderSummary | null>(
@@ -136,6 +139,11 @@ export function FundingOrderFlow({
   const openedRedirectOrderRef = useRef<string | null>(
     initialOrder?.id ?? null,
   );
+
+  function changeAmount(value: string, source: MoneyAmountChangeSource) {
+    setAmountChangeSource(source);
+    setAmount(value);
+  }
 
   const orderQuery = useHomeQuery({
     queryKey: order
@@ -328,7 +336,8 @@ export function FundingOrderFlow({
         })}
         <MoneyAmountDisplay
           amount={amount}
-          onAmountChange={setAmount}
+          amountChangeSource={amountChangeSource}
+          onAmountChange={changeAmount}
           assetId={binding.assetId}
           assetLabel={binding.currency}
           assetCurrency={binding.currency}
@@ -339,7 +348,7 @@ export function FundingOrderFlow({
         <MoneyNumpad
           value={amount}
           maxDecimals={2}
-          onChange={setAmount}
+          onChange={changeAmount}
           disabled={busy}
         />
         {error ? (

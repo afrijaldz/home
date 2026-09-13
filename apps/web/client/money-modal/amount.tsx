@@ -32,6 +32,16 @@ const AMOUNT_FIT_TOLERANCE_PX = 0.5;
 // a measured fit never overflows the container by a subpixel rounding error.
 const AMOUNT_FIT_SAFETY_FACTOR = 0.97;
 
+export type MoneyAmountChangeSource = "keypad" | "programmatic";
+
+export function shouldAnimatePrimaryAmount(
+  previousAmount: string,
+  amount: string,
+  changeSource: MoneyAmountChangeSource,
+): boolean {
+  return previousAmount === amount || changeSource === "programmatic";
+}
+
 /**
  * Scales a formatted amount to fit the available width without changing,
  * rounding, abbreviating, ellipsizing, or clipping the value. Returns the
@@ -182,9 +192,10 @@ export function MoneyAmountDisplay({
   pricing,
   nativeSymbol,
   initialUnit = "local",
+  amountChangeSource = "programmatic",
 }: {
   amount: string;
-  onAmountChange?: (value: string) => void;
+  onAmountChange?: (value: string, source: MoneyAmountChangeSource) => void;
   availableLabel?: string;
   availableAmount?: string | null;
   assetId?: string;
@@ -197,6 +208,7 @@ export function MoneyAmountDisplay({
   pricing: MoneyAssetPricing;
   nativeSymbol: string;
   initialUnit?: MoneyPrimaryUnit;
+  amountChangeSource?: MoneyAmountChangeSource;
 }) {
   const [requestedUnit, setRequestedUnit] = useState<MoneyPrimaryUnit>(initialUnit);
   const lastAssetId = useRef(assetId);
@@ -233,11 +245,16 @@ export function MoneyAmountDisplay({
             localCurrency={pricing.status === "priced" ? pricing.localCurrency : "USD"}
             primaryUnit={primaryUnit}
             availableAmount={maxAmount}
-            onSelect={onAmountChange}
+            onSelect={(value) => onAmountChange(value, "programmatic")}
           />
         ) : null}
       </div>
-      <MoneyPrimaryAmount amount={amount} unit={primaryUnit} pricing={pricing} />
+      <MoneyPrimaryAmount
+        amount={amount}
+        changeSource={amountChangeSource}
+        unit={primaryUnit}
+        pricing={pricing}
+      />
       {pricing.status === "priced" ? (
         <MoneyUnitToggle
           secondaryLabel={secondary}
@@ -253,14 +270,22 @@ export function MoneyAmountDisplay({
 
 export function MoneyPrimaryAmount({
   amount,
+  changeSource,
   unit,
   pricing,
 }: {
   amount: string;
+  changeSource: MoneyAmountChangeSource;
   unit: MoneyPrimaryUnit;
   pricing: MoneyAssetPricing;
 }) {
   const text = formatPrimaryAmount(amount, unit, pricing);
+  const [rendered, setRendered] = useState({ amount, text, animated: true });
+  let animated = rendered.animated;
+  if (rendered.amount !== amount || rendered.text !== text) {
+    animated = shouldAnimatePrimaryAmount(rendered.amount, amount, changeSource);
+    setRendered({ amount, text, animated });
+  }
   const { containerRef, sizerRef, fontSize, scaleX } = useAutoFitAmountText(text);
 
   return (
@@ -273,6 +298,7 @@ export function MoneyPrimaryAmount({
       >
         <MoneyTicker
           value={text}
+          animated={animated}
           reserveDigits={false}
           style={scaleX < 1 ? { transform: `scaleX(${scaleX})`, transformOrigin: "center" } : undefined}
         />
@@ -419,7 +445,7 @@ export function MoneyNumpad({
 }: {
   value: string;
   maxDecimals: number;
-  onChange: (value: string) => void;
+  onChange: (value: string, source: MoneyAmountChangeSource) => void;
   disabled?: boolean;
 }) {
   return (
@@ -434,7 +460,7 @@ export function MoneyNumpad({
           onClick={() => {
             const next = applyNumpadKey(value, key, maxDecimals);
             if (next === value) return;
-            onChange(next);
+            onChange(next, "keypad");
             triggerKeyHaptic();
           }}
         >

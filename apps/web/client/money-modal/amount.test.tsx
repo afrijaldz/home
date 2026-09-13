@@ -3,9 +3,14 @@ import "@/client/account/dom-test-harness";
 import { page } from "@/tests/helpers/dom";
 import { afterEach, describe, expect, test } from "bun:test";
 import { useState } from "react";
+import type { MoneyAmountChangeSource } from "./amount";
 
 const { cleanup, fireEvent, render } = await import("@testing-library/react");
-const { MoneyAmountDisplay, MoneyNumpad } = await import("./amount");
+const {
+  MoneyAmountDisplay,
+  MoneyNumpad,
+  shouldAnimatePrimaryAmount,
+} = await import("./amount");
 const { moneyAssetPricing } = await import("./amount-units");
 
 const usdUsdc = moneyAssetPricing("USDC", "US");
@@ -36,11 +41,18 @@ function AmountHarness({
   availableAmount?: string | null;
 }) {
   const [amount, setAmount] = useState("");
+  const [amountChangeSource, setAmountChangeSource] =
+    useState<MoneyAmountChangeSource>("programmatic");
+  const changeAmount = (value: string, source: MoneyAmountChangeSource) => {
+    setAmountChangeSource(source);
+    setAmount(value);
+  };
   return (
     <>
       <MoneyAmountDisplay
         amount={amount}
-        onAmountChange={setAmount}
+        amountChangeSource={amountChangeSource}
+        onAmountChange={changeAmount}
         availableLabel={availableLabel}
         availableAmount={availableAmount}
         assetId={assetId}
@@ -52,13 +64,33 @@ function AmountHarness({
         pricing={pricing}
         nativeSymbol={nativeSymbol}
       />
-      <MoneyNumpad value={amount} maxDecimals={6} onChange={setAmount} />
+      <MoneyNumpad value={amount} maxDecimals={6} onChange={changeAmount} />
       <output aria-label="Native amount">{amount}</output>
     </>
   );
 }
 
 afterEach(cleanup);
+
+test("primary amount animation follows the authored change source", () => {
+  const cases: ReadonlyArray<{
+    name: string;
+    previousAmount: string;
+    amount: string;
+    source: MoneyAmountChangeSource;
+    expected: boolean;
+  }> = [
+    { name: "initial display", previousAmount: "", amount: "", source: "programmatic", expected: true },
+    { name: "keypad digit", previousAmount: "1", amount: "12", source: "keypad", expected: false },
+    { name: "keypad delete", previousAmount: "12", amount: "1", source: "keypad", expected: false },
+    { name: "quick amount", previousAmount: "1", amount: "25", source: "programmatic", expected: true },
+    { name: "unit toggle", previousAmount: "25", amount: "25", source: "keypad", expected: true },
+  ];
+
+  for (const { name, previousAmount, amount, source, expected } of cases) {
+    expect(shouldAnimatePrimaryAmount(previousAmount, amount, source), name).toBe(expected);
+  }
+});
 
 describe("MoneyAmountDisplay", () => {
   test("toggles display units without changing the entered native amount", () => {

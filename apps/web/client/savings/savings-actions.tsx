@@ -16,6 +16,7 @@ import {
   decimalFromBaseUnits,
   isPositiveDecimalAmount,
   useMoneyAssetPricing,
+  type MoneyAmountChangeSource,
 } from "@/client/money-modal";
 import type {
   OperationResult,
@@ -55,6 +56,8 @@ export function SavingsMoneyDialog({
   onConfirmed,
 }: SavingsMoneyDialogProps) {
   const [amount, setAmount] = useState("");
+  const [amountChangeSource, setAmountChangeSource] =
+    useState<MoneyAmountChangeSource>("programmatic");
   const [amountBaseUnits, setAmountBaseUnits] = useState<string | null>(null);
   const [preparedAction, setPreparedAction] = useState<PreparedMoneyAction | null>(null);
   const [attemptedAction, setAttemptedAction] = useState(false);
@@ -93,8 +96,13 @@ export function SavingsMoneyDialog({
     });
   }, [addToast, candidate.name, success]);
 
+  function changeAmount(value: string, source: MoneyAmountChangeSource) {
+    setAmountChangeSource(source);
+    setAmount(value);
+  }
+
   function reset() {
-    setAmount("");
+    changeAmount("", "programmatic");
     setAmountBaseUnits(null);
     setPreparedAction(null);
     setAttemptedAction(false);
@@ -210,7 +218,8 @@ export function SavingsMoneyDialog({
             <>
               <MoneyAmountDisplay
                 amount={amount}
-                onAmountChange={setAmount}
+                amountChangeSource={amountChangeSource}
+                onAmountChange={changeAmount}
                 availableLabel={availableLabel}
                 availableAmount={decimalFromBaseUnits(availableBaseUnits ?? "", 6)}
                 assetId="usdc"
@@ -220,7 +229,7 @@ export function SavingsMoneyDialog({
                 pricing={pricing}
                 nativeSymbol="USDC"
               />
-              <MoneyNumpad value={amount} maxDecimals={6} onChange={setAmount} />
+              <MoneyNumpad value={amount} maxDecimals={6} onChange={changeAmount} />
             </>
           ) : null}
 
