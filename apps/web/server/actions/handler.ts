@@ -33,6 +33,12 @@ const hashPattern = /^0x[0-9a-fA-F]{64}$/;
 const RECONCILE_GRACE_MS = 20_000;
 const RECONCILE_MAX_PER_REQUEST = 5;
 const RECONCILE_DEADLINE_MS = 3_000;
+let defaultActionHandleResolver: ActionHandleResolver | null = null;
+
+function getDefaultActionHandleResolver(): ActionHandleResolver {
+  defaultActionHandleResolver ??= createActionHandleResolver();
+  return defaultActionHandleResolver;
+}
 
 async function authorizeOwner(request: Request, authorize: ActionAuthorizer): Promise<MoneyActionOwner | Response> {
   const boundary = await authorizeSession(request, authorize);
@@ -48,7 +54,6 @@ export function createGetActionHandler(dependencies: {
   resolveHandle?: ActionHandleResolver;
   now?: () => Date;
 }) {
-  const resolveHandle = dependencies.resolveHandle ?? createActionHandleResolver();
   return async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     const owner = await authorizeOwner(request, dependencies.authorize);
     if (owner instanceof Response) return owner;
@@ -73,7 +78,7 @@ export function createGetActionHandler(dependencies: {
             row,
             owner,
             store: dependencies.store ?? getActionsStore(),
-            resolveHandle,
+            resolveHandle: dependencies.resolveHandle ?? getDefaultActionHandleResolver(),
             signal: deadline.signal,
             route: "/api/actions/:id",
           })
@@ -189,7 +194,6 @@ export function createListActionsHandler(dependencies: {
   resolveHandle?: ActionHandleResolver;
   now?: () => Date;
 }) {
-  const resolveHandle = dependencies.resolveHandle ?? createActionHandleResolver();
   return async function GET(request: Request): Promise<Response> {
     const owner = await authorizeOwner(request, dependencies.authorize);
     if (owner instanceof Response) return owner;
@@ -209,7 +213,7 @@ export function createListActionsHandler(dependencies: {
               row,
               owner,
               store,
-              resolveHandle,
+              resolveHandle: dependencies.resolveHandle ?? getDefaultActionHandleResolver(),
               signal: deadline.signal,
               route: "/api/actions",
             })
@@ -321,6 +325,7 @@ function isReconcileCandidate(row: ActionRow, now: Date): boolean {
     row.confirmed_at !== null &&
     row.transaction_hash === null &&
     row.provider_handle !== null &&
+    row.provider_handle !== row.id &&
     Number.isFinite(confirmedAt) &&
     now.getTime() - confirmedAt >= RECONCILE_GRACE_MS;
 }

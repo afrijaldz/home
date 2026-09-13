@@ -141,6 +141,46 @@ describe("Base Account handle reconciliation", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test("opens the circuit when its own timeout aborts a hanging request", async () => {
+    const currentTime = 1_000;
+    let fetchCalls = 0;
+    const fetchImpl = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCalls += 1;
+      const signal = init?.signal;
+      if (!signal) throw new Error("missing signal");
+      return await new Promise<Response>((_resolve, reject) => {
+        const rejectOnAbort = () => {
+          expect(signal.reason).toBeInstanceOf(DOMException);
+          expect((signal.reason as DOMException).name).toBe("TimeoutError");
+          reject(signal.reason);
+        };
+        signal.addEventListener("abort", rejectOnAbort, { once: true });
+        if (signal.aborted) rejectOnAbort();
+      });
+    };
+    const resolver = createActionHandleResolver({
+      fetchImpl,
+      now: () => currentTime,
+      timeoutMs: 5,
+    });
+
+    expect(await resolver(action())).toEqual({ status: "unavailable" });
+    expect(await resolver(action({ provider_handle: "different-handle" }))).toEqual({ status: "unavailable" });
+    expect(fetchCalls).toBe(1);
+  });
+
+  test("backs off terminal failed handles for five minutes", async () => {
+    let currentTime = 1_000;
+    const { calls, fetchImpl } = fixtureFetch((handle) => rpcResult(handle, { status: 500 }));
+    const resolver = createActionHandleResolver({ fetchImpl, now: () => currentTime });
+
+    expect(await resolver(action())).toEqual({ status: "failed" });
+    currentTime += 299_999;
+    expect(await resolver(action())).toEqual({ status: "unavailable" });
+    expect(await resolver(action({ provider_handle: "different-handle" }))).toEqual({ status: "failed" });
+    expect(calls).toHaveLength(2);
+  });
+
   test("a caller abort returns unavailable without opening the circuit", async () => {
     const controller = new AbortController();
     controller.abort();

@@ -272,6 +272,29 @@ describe("actions HTTP handlers", () => {
     expect(recordCalls).toBe(0);
   });
 
+  test("list leaves failed handle resolutions unrecorded and unchanged", async () => {
+    setObservabilityLogWriterForTests(() => undefined);
+    const candidate = confirmedBaseRow();
+    let recordCalls = 0;
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        list: async () => [candidate],
+        recordHandle: async () => { recordCalls += 1; return null; },
+      },
+      resolveHandle: async () => ({ status: "failed" }),
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+    const body = await response.json() as { actions: Array<{ status: string; transactionHash?: string }> };
+
+    expect(response.status).toBe(200);
+    expect(recordCalls).toBe(0);
+    expect(body.actions[0]).toMatchObject({ id: candidate.id, status: "pending" });
+    expect(body.actions[0]?.transactionHash).toBeUndefined();
+  });
+
   test("list tolerates a recordHandle conflict and presents the stored row", async () => {
     setObservabilityLogWriterForTests(() => undefined);
     const candidate = confirmedBaseRow();
@@ -290,17 +313,49 @@ describe("actions HTTP handlers", () => {
     expect(body.actions[0]?.transactionHash).toBeUndefined();
   });
 
+  test("list tolerates a throwing recordHandle and presents the stored row", async () => {
+    const writes: string[] = [];
+    setObservabilityLogWriterForTests((line) => writes.push(line));
+    const candidate = confirmedBaseRow();
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        list: async () => [candidate],
+        recordHandle: async () => { throw new Error("database unavailable"); },
+      },
+      resolveHandle: async () => ({ status: "complete", transactionHash: HASH }),
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+    const body = await response.json() as { actions: Array<{ status: string; transactionHash?: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.actions[0]).toMatchObject({ id: candidate.id, status: "pending" });
+    expect(body.actions[0]?.transactionHash).toBeUndefined();
+    expect(JSON.parse(writes[0] ?? "{}")).toMatchObject({
+      kind: "action-reconcile",
+      outcome: "unavailable",
+      level: "info",
+    });
+  });
+
   test("list reconciles only the newest five candidates", async () => {
     const candidates = Array.from({ length: 7 }, (_, index) => confirmedBaseRow({
       id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
       confirmed_at: new Date(Date.parse("2026-09-12T12:00:00.000Z") + index * 1_000).toISOString(),
       provider_handle: `${HANDLE}:${index}`,
     }));
+    const legacy = confirmedBaseRow({
+      id: "99999999-9999-4999-8999-999999999999",
+      confirmed_at: "2026-09-12T12:09:00.000Z",
+      provider_handle: "99999999-9999-4999-8999-999999999999",
+    });
     const resolvedIds: string[] = [];
     const handler = createListActionsHandler({
       authorize: authorize("owner-a", "base-account"),
       now: () => new Date("2026-09-12T12:10:00.000Z"),
-      store: { list: async () => candidates, recordHandle: async () => null },
+      store: { list: async () => [legacy, ...candidates], recordHandle: async () => null },
       resolveHandle: async (candidate) => { resolvedIds.push(candidate.id); return { status: "pending" }; },
     });
 
@@ -309,8 +364,49 @@ describe("actions HTTP handlers", () => {
     expect(resolvedIds.sort()).toEqual(candidates.slice(2).map(({ id }) => id).sort());
   });
 
+  test("list reconciles only eligible Base rows while reading existing receipts", async () => {
+    const cdpRow = confirmedBaseRow({
+      id: "22222222-2222-4222-8222-222222222222",
+      provider: "cdp-embedded",
+    });
+    const hashedRow = confirmedBaseRow({
+      id: "33333333-3333-4333-8333-333333333333",
+      provider_handle: "hashed-handle",
+      transaction_hash: HASH,
+    });
+    const candidate = confirmedBaseRow({
+      id: "44444444-4444-4444-8444-444444444444",
+      provider_handle: "candidate-handle",
+    });
+    const resolvedIds: string[] = [];
+    const receiptHashes: string[] = [];
+    const handler = createListActionsHandler({
+      authorize: authorize("owner-a", "base-account"),
+      now: () => new Date("2026-09-12T12:10:00.000Z"),
+      store: {
+        list: async () => [cdpRow, hashedRow, candidate],
+        recordHandle: async () => null,
+      },
+      resolveHandle: async (resolved) => {
+        resolvedIds.push(resolved.id);
+        return { status: "pending" };
+      },
+      readReceipt: async (hash) => {
+        receiptHashes.push(hash);
+        return { status: "pending", transactionHash: hash };
+      },
+    });
+
+    const response = await handler(baseRequest("/api/actions"));
+
+    expect(response.status).toBe(200);
+    expect(resolvedIds).toEqual([candidate.id]);
+    expect(receiptHashes).toEqual([HASH]);
+  });
+
   test("list survives a throwing resolver", async () => {
-    setObservabilityLogWriterForTests(() => undefined);
+    const writes: string[] = [];
+    setObservabilityLogWriterForTests((line) => writes.push(line));
     const candidate = confirmedBaseRow();
     const handler = createListActionsHandler({
       authorize: authorize("owner-a", "base-account"),
@@ -323,6 +419,11 @@ describe("actions HTTP handlers", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).actions[0]).toMatchObject({ id: candidate.id, status: "pending" });
+    expect(JSON.parse(writes[0] ?? "{}")).toMatchObject({
+      kind: "action-reconcile",
+      outcome: "unavailable",
+      level: "info",
+    });
   });
 
   test("GET reconciles one eligible candidate", async () => {

@@ -20,7 +20,8 @@ type FetchLike = (
 ) => Promise<Response>;
 
 const DEFAULT_STATUS_RPC_URL = "https://rpc.wallet.coinbase.com";
-const DEFAULT_TIMEOUT_MS = 3_000;
+// Intentionally below handler.ts RECONCILE_DEADLINE_MS (3,000ms) so provider hangs open the breaker first.
+const DEFAULT_TIMEOUT_MS = 2_500;
 const CIRCUIT_BREAKER_MS = 60_000;
 const UNKNOWN_HANDLE_BACKOFF_MS = 5 * 60_000;
 const UNAVAILABLE_BACKOFF_MS = 30_000;
@@ -85,7 +86,9 @@ export function createActionHandleResolver(
       const abortFromExternal = () => controller.abort(externalSignal?.reason);
       externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
       if (externalSignal?.aborted) abortFromExternal();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const timeout = setTimeout(() => {
+        controller.abort(new DOMException("Base Account status request timed out.", "TimeoutError"));
+      }, timeoutMs);
 
       try {
         let response: Response;
@@ -109,8 +112,10 @@ export function createActionHandleResolver(
             signal: controller.signal,
           });
         } catch {
-          // A caller abort says nothing about provider health; only our own timeout or a transport failure trips the breaker.
-          if (externalSignal?.aborted) return { status: "unavailable" };
+          const timedOut = controller.signal.reason instanceof DOMException &&
+            controller.signal.reason.name === "TimeoutError";
+          // A caller abort says nothing about provider health; our timeout and transport failures do.
+          if (externalSignal?.aborted && !timedOut) return { status: "unavailable" };
           circuitOpenUntil = now() + CIRCUIT_BREAKER_MS;
           backoff(handle, now() + UNAVAILABLE_BACKOFF_MS);
           return { status: "unavailable" };
@@ -148,6 +153,8 @@ export function createActionHandleResolver(
         const resolution = parseResult(payload.result, handle);
         if (resolution.status === "unavailable") {
           backoff(handle, now() + UNAVAILABLE_BACKOFF_MS);
+        } else if (resolution.status === "failed") {
+          backoff(handle, now() + UNKNOWN_HANDLE_BACKOFF_MS);
         } else {
           handleBackoffs.delete(handle);
         }

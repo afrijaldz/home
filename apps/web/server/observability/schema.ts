@@ -203,7 +203,10 @@ export function normalizeObservabilityEvent(
       : undefined;
     return {
       ...base,
-      level: outcome === "unmatched" || outcome === "ok" ? "info" : "error",
+      level: outcome === "unmatched" || outcome === "ok" ||
+        (event.kind === "action-reconcile" && outcome === "unavailable")
+        ? "info"
+        : "error",
       kind: event.kind,
       code,
       outcome,
