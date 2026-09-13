@@ -1,28 +1,34 @@
 "use client";
 
-import Link from "next/link";
+import { useState, type ReactNode } from "react";
+import { ArrowRight, LoaderCircle } from "lucide-react";
+import { useAccountWallet, type AccountWalletClient } from "@/client/account/cdp-client";
+import { dataOwnerKey as ownerDataKey } from "@/client/account/owner-keys";
 import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
-import { Button, buttonVariants } from "@/components/ui/button";
+  MoneyAmountDisplay,
+  MoneyConfirmSummary,
+  MoneyModal,
+  MoneyModalBody,
+  MoneyModalFooter,
+  MoneyModalHeader,
+  MoneyNumpad,
+  decimalFromBaseUnits,
+  isPositiveDecimalAmount,
+  useMoneyAssetPricing,
+  type MoneyAmountChangeSource,
+} from "@/client/money-modal";
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  browserHomeQueryClient,
+  ownerQueryKey,
+  ownerQueryMeta,
+  useHomeQuery,
+  useHomeQueryClient,
+} from "@/client/query/query-client";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import {
   Item,
   ItemActions,
@@ -32,130 +38,130 @@ import {
   ItemSeparator,
   ItemTitle,
 } from "@/components/ui/item";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MoneyTicker } from "@/components/money-ticker";
-import { ArrowLeft } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useAccountWallet } from "@/client/account/cdp-client";
-import { dataOwnerKey as ownerDataKey } from "@/client/account/owner-keys";
+import type { RegionId } from "@/config/regions";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
-import { MoneyActionReview } from "@/client/actions/review";
-import type {
-  OperationResult,
-  PreparedMoneyAction,
-} from "@/shared/money-actions/types";
+import { getBorrowMarketRef, type BorrowMarketId } from "@/shared/borrowing/config";
 import {
+  parseBorrowOverview,
+  parseSnapshot,
+  type BorrowMarketIdentity,
+  type BorrowMarketSnapshot,
+  type BorrowOverviewOpportunity,
+  type BorrowOverviewPosition,
+  type BorrowOverviewResponse,
+} from "@/shared/borrowing/contract";
+import type { BorrowOperation } from "@/shared/borrowing/types";
+import {
+  formatExactPresentationTokenAmount,
   formatHealthFactor,
   formatOracleUsd,
-  formatPresentationDate,
   formatPresentationTokenAmount,
   formatWadPercent,
 } from "@/shared/formatting";
-import { readAnonymousCountryPreference } from "@/config/country-preference";
-import { resolvePresentation, type RegionId } from "@/config/regions";
+import type { PreparedMoneyAction } from "@/shared/money-actions/types";
 import {
-  BORROW_COLLATERAL_TOKEN,
-  BORROW_HEALTH_BUFFER_WAD,
-  BORROW_HEALTH_CRITICAL_WAD,
-  BORROW_HEALTH_FLOOR_WAD,
-  BORROW_LIQUIDATION_HEALTH_WAD,
-  BORROW_LOAN_TOKEN,
-  BORROW_MARKET_ID,
-} from "@/shared/borrowing/config";
-import {
-  actionKindForBorrowOperation,
-  type BorrowOperation,
-  type BorrowPreviewResponse,
-} from "@/shared/borrowing/types";
-import {
-  parseSnapshot,
-  type BorrowMarketSnapshot,
-} from "@/shared/borrowing/contract";
-import {
-  ownerQueryKey,
-  ownerQueryMeta,
-  useHomeQuery,
-} from "@/client/query/query-client";
+  borrowRiskCopy,
+  borrowRiskDescription,
+  borrowRiskState,
+  buildBorrowPreparedIntent,
+} from "./borrow-ui";
 
-type FetchAccountResource = (
-  path: string,
-  options?: {
-    method?: "GET" | "POST";
-    body?: unknown;
-    signal?: AbortSignal;
-  },
-) => Promise<unknown>;
+type FetchAccountResource = AccountWalletClient["fetchAccountResource"];
+type PrepareMoneyAction = AccountWalletClient["prepareMoneyAction"];
+type ExecuteMoneyAction = AccountWalletClient["executeMoneyAction"];
 
 type BorrowExperienceProps = {
   session: VerifiedAccountSession | null;
   fetchAccountResource?: FetchAccountResource;
-  prepareMoneyAction?: (
-    kind: string,
-    params: unknown,
-  ) => Promise<PreparedMoneyAction>;
-  executeMoneyAction?: (
-    action: PreparedMoneyAction,
-  ) => Promise<OperationResult>;
+  prepareMoneyAction?: PrepareMoneyAction;
+  executeMoneyAction?: ExecuteMoneyAction;
+  selectedMarketId?: BorrowMarketId | null;
+  onSelectMarket?: (marketId: BorrowMarketId | null) => void;
   regionId?: RegionId;
 };
 
-type SnapshotState =
-  | { status: "idle" | "loading"; snapshot: null }
-  | { status: "ready"; snapshot: BorrowMarketSnapshot }
-  | { status: "error"; snapshot: null };
+type BorrowDialogState = {
+  operation: BorrowOperation;
+  snapshot: BorrowMarketSnapshot;
+} | null;
 
-type PreviewState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | {
-      status: "preview-only";
-      response: Extract<BorrowPreviewResponse, { status: "preview-only" }>;
-    }
-  | { status: "prepared"; action: PreparedMoneyAction };
-
-type LimitPresentation = {
-  value: string;
-  suffix: string;
-  secondValue?: string;
-  secondSuffix?: string;
-};
-
-const BORROW_OPERATION_LABELS: Record<BorrowOperation, string> = {
-  "supply-collateral": "Supply cbBTC collateral",
-  borrow: "Borrow USDC",
-  "supply-and-borrow": "Supply cbBTC and borrow USDC",
-  repay: "Repay USDC (partial)",
-  "repay-all": "Repay all USDC debt",
-  "withdraw-collateral": "Withdraw cbBTC collateral",
+const operationLabels: Record<BorrowOperation, string> = {
+  "supply-collateral": "Add collateral",
+  borrow: "Borrow",
+  "supply-and-borrow": "Supply and borrow",
+  repay: "Repay",
+  "repay-all": "Repay all",
+  "withdraw-collateral": "Withdraw collateral",
   "close-position": "Close position",
 };
 
-/** Not routed today (D4: `/borrow` deleted); retained for a future Borrow shell panel. */
-export function AuthenticatedBorrowExperience() {
+export function AuthenticatedBorrowExperience({
+  selectedMarketId = null,
+  onSelectMarket,
+  regionId = "GLOBAL",
+}: {
+  selectedMarketId?: BorrowMarketId | null;
+  onSelectMarket?: (marketId: BorrowMarketId | null) => void;
+  regionId?: RegionId;
+}) {
   const account = useAccountWallet();
-  const regionId = usePersistedPresentationRegion();
   return (
     <BorrowExperience
       session={account.status === "verified" ? account.session : null}
       fetchAccountResource={account.fetchAccountResource}
       prepareMoneyAction={account.prepareMoneyAction}
       executeMoneyAction={account.executeMoneyAction}
+      selectedMarketId={selectedMarketId}
+      onSelectMarket={onSelectMarket}
       regionId={regionId}
     />
   );
 }
 
+export function AuthenticatedBorrowTeaser({ onOpen, regionId = "GLOBAL" }: { onOpen: () => void; regionId?: RegionId }) {
+  const account = useAccountWallet();
+  const session = account.status === "verified" ? account.session : null;
+  const overview = useBorrowOverview(session, account.fetchAccountResource);
+  const active = overview.data?.positions[0] ?? null;
+  const leading = overview.data?.opportunities
+    .slice()
+    .sort((a, b) => a.market.rank - b.market.rank)[0] ?? null;
+  const title = active
+    ? `${active.market.collateralToken.symbol} position`
+    : leading?.market.collateralToken.symbol === "cbBTC"
+      ? "Borrow against Bitcoin"
+      : "Explore Borrow";
+  const description = active
+    ? `${formatToken(active.debtAssetsRaw, active.market.loanToken, regionId)} debt · ${borrowRiskCopy(borrowRiskState(active.healthFactorWad))}`
+    : leading?.availability.status === "unavailable"
+      ? "Explore verified borrowing markets"
+      : leading
+        ? `Borrow ${leading.market.loanToken.symbol} against ${leading.market.collateralToken.symbol}`
+        : "Explore verified borrowing markets";
+
+  return (
+    <ItemGroup className="gap-0">
+      <Item
+        size="sm"
+        className="cursor-pointer border-0 text-left hover:bg-muted"
+        render={<Button variant="ghost" type="button" />}
+        onClick={onOpen}
+        aria-label="Borrow"
+      >
+        <ItemContent>
+          <ItemTitle>{overview.isPending ? "Borrow" : title}</ItemTitle>
+          <ItemDescription>{overview.isPending ? "Loading borrowing opportunities…" : description}</ItemDescription>
+        </ItemContent>
+        <ItemActions><ArrowRight className="size-4" aria-hidden="true" /></ItemActions>
+      </Item>
+    </ItemGroup>
+  );
+}
+
 export function BorrowExperience(props: BorrowExperienceProps) {
-  const sessionKey = props.session?.smartAccount
-    ? ownerDataKey(props.session)
-    : "signed-out";
+  const sessionKey = props.session?.smartAccount ? ownerDataKey(props.session) : "signed-out";
   return <BorrowExperienceInner key={sessionKey} {...props} />;
 }
 
@@ -164,609 +170,688 @@ function BorrowExperienceInner({
   fetchAccountResource,
   prepareMoneyAction,
   executeMoneyAction,
+  selectedMarketId = null,
+  onSelectMarket,
   regionId = "GLOBAL",
 }: BorrowExperienceProps) {
-  const owner = session?.smartAccount?.address ?? null;
-  const sessionKey = session?.smartAccount ? ownerDataKey(session) : null;
-  const dataOwnerKey = sessionKey;
-  const snapshotQuery = useHomeQuery({
-    queryKey: dataOwnerKey
-      ? ownerQueryKey(dataOwnerKey, "borrow")
-      : ["unauthenticated", "borrow-disabled"],
-    enabled: Boolean(sessionKey && fetchAccountResource && owner),
-    staleTime: 15_000,
-    retry: false,
-    refetchOnWindowFocus: false,
-    meta: dataOwnerKey ? ownerQueryMeta(dataOwnerKey, "owner") : undefined,
-    queryFn: ({ signal }) => {
-      if (!fetchAccountResource) throw new Error("Borrowing is unavailable.");
-      return fetchAccountResource(`/api/borrow/markets/${BORROW_MARKET_ID}`, { signal });
+  const overview = useBorrowOverview(session, fetchAccountResource);
+  const configuredSelection = selectedMarketId && getBorrowMarketRef(selectedMarketId)
+    ? selectedMarketId
+    : null;
+
+  if (configuredSelection) {
+    return (
+      <BorrowMarketDetail
+        session={session}
+        fetchAccountResource={fetchAccountResource}
+        prepareMoneyAction={prepareMoneyAction}
+        executeMoneyAction={executeMoneyAction}
+        marketId={configuredSelection}
+        onBack={() => onSelectMarket?.(null)}
+        regionId={regionId}
+      />
+    );
+  }
+
+  return (
+    <section className="space-y-4" aria-labelledby="borrow-overview-title">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight" id="borrow-overview-title">Borrow</h1>
+        <p className="text-sm text-muted-foreground">Borrow from verified isolated markets on Base.</p>
+      </div>
+
+      {!session?.smartAccount ? <BorrowNotice title="Sign in to view Borrow" /> : null}
+      {session?.smartAccount && overview.isPending ? <BorrowOverviewLoading /> : null}
+      {session?.smartAccount && overview.isError && !overview.data ? (
+        <BorrowNotice
+          tone="error"
+          role="alert"
+          title="Borrow is unavailable"
+          action={<Button variant="secondary" onClick={() => void overview.refetch()}>Retry</Button>}
+        >Current market and position values could not be verified. No zero values are shown.</BorrowNotice>
+      ) : null}
+
+      {overview.data && session ? (
+        <>
+          {overview.isFetching ? (
+            <BorrowNotice title="Refreshing Borrow data">Showing the last verified values while current state loads.</BorrowNotice>
+          ) : null}
+          {overview.data.discovery.status === "partial" ? (
+            <BorrowNotice tone="error" role="alert" title="Some Borrow data is unavailable">
+              {overview.data.discovery.reason ?? "Position discovery may be incomplete. Missing values are not zero."}
+            </BorrowNotice>
+          ) : null}
+          <BorrowPositions
+            positions={overview.data.positions}
+            regionId={regionId}
+            onSelectMarket={onSelectMarket}
+          />
+          <BorrowOpportunities
+            opportunities={overview.data.opportunities}
+            activeMarketIds={new Set(overview.data.positions.map((position) => position.market.id))}
+            session={session}
+            fetchAccountResource={fetchAccountResource}
+            regionId={regionId}
+            onSelectMarket={onSelectMarket}
+          />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function BorrowPositions({
+  positions,
+  regionId,
+  onSelectMarket,
+}: {
+  positions: BorrowOverviewPosition[];
+  regionId: RegionId;
+  onSelectMarket?: (marketId: BorrowMarketId | null) => void;
+}) {
+  const ordered = positions.slice().sort((a, b) => a.market.rank - b.market.rank);
+  return (
+    <section aria-labelledby="borrow-positions-title">
+      <Card>
+        <CardHeader><CardTitle id="borrow-positions-title">Active positions</CardTitle></CardHeader>
+        <CardContent className="px-2">
+          {ordered.length === 0 ? (
+            <Empty><EmptyHeader><EmptyTitle>No active Borrow positions</EmptyTitle></EmptyHeader></Empty>
+          ) : (
+            <ItemGroup className="gap-0">
+              {ordered.map((position, index) => (
+                <BorrowPositionRow
+                  key={position.market.id}
+                  position={position}
+                  regionId={regionId}
+                  onOpen={() => onSelectMarket?.(position.market.id)}
+                  separated={index > 0}
+                />
+              ))}
+            </ItemGroup>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function BorrowPositionRow({
+  position,
+  regionId,
+  onOpen,
+  separated,
+}: {
+  position: BorrowOverviewPosition;
+  regionId: RegionId;
+  onOpen: () => void;
+  separated: boolean;
+}) {
+  const risk = borrowRiskState(position.healthFactorWad);
+  return (
+    <>
+      {separated ? <ItemSeparator /> : null}
+      <Item
+        size="sm"
+        className="cursor-pointer border-0 text-left hover:bg-muted"
+        render={<Button variant="ghost" type="button" />}
+        onClick={onOpen}
+      >
+        <ItemContent>
+          <ItemTitle>{marketPair(position.market)}</ItemTitle>
+          <ItemDescription>
+            {formatToken(position.collateralRaw, position.market.collateralToken, regionId)} collateral · {formatToken(position.debtAssetsRaw, position.market.loanToken, regionId)} debt
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions className="ml-auto flex-col items-end gap-1">
+          <Badge variant={risk === "urgent" || risk === "liquidatable" ? "destructive" : "secondary"}>{borrowRiskCopy(risk)}</Badge>
+          <span className="text-xs text-muted-foreground">{formatHealthFactor(position.healthFactorWad, regionId)}</span>
+        </ItemActions>
+      </Item>
+    </>
+  );
+}
+
+function BorrowOpportunities({
+  opportunities,
+  activeMarketIds,
+  session,
+  fetchAccountResource,
+  regionId,
+  onSelectMarket,
+}: {
+  opportunities: BorrowOverviewOpportunity[];
+  activeMarketIds: Set<BorrowMarketId>;
+  session: VerifiedAccountSession;
+  fetchAccountResource?: FetchAccountResource;
+  regionId: RegionId;
+  onSelectMarket?: (marketId: BorrowMarketId | null) => void;
+}) {
+  const ordered = opportunities
+    .filter((entry) => !activeMarketIds.has(entry.market.id))
+    .sort((a, b) => a.market.rank - b.market.rank);
+  return (
+    <section aria-labelledby="borrow-opportunities-title">
+      <Card>
+        <CardHeader><CardTitle id="borrow-opportunities-title">Borrow opportunities</CardTitle></CardHeader>
+        <CardContent className="px-2">
+          {ordered.length === 0 ? (
+            <Empty><EmptyHeader><EmptyTitle>No other enabled markets</EmptyTitle></EmptyHeader></Empty>
+          ) : (
+            <ItemGroup className="gap-0">
+              {ordered.map((opportunity, index) => (
+                <BorrowOpportunityRow
+                  key={opportunity.market.id}
+                  opportunity={opportunity}
+                  session={session}
+                  fetchAccountResource={fetchAccountResource}
+                  regionId={regionId}
+                  onOpen={() => onSelectMarket?.(opportunity.market.id)}
+                  separated={index > 0}
+                />
+              ))}
+            </ItemGroup>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function BorrowOpportunityRow({
+  opportunity,
+  session,
+  fetchAccountResource,
+  regionId,
+  onOpen,
+  separated,
+}: {
+  opportunity: BorrowOverviewOpportunity;
+  session: VerifiedAccountSession;
+  fetchAccountResource?: FetchAccountResource;
+  regionId: RegionId;
+  onOpen: () => void;
+  separated: boolean;
+}) {
+  const detail = useBorrowDetail(session, opportunity.market.id, fetchAccountResource, opportunity.availability.status === "available");
+  const walletCollateral = detail.data
+    ? formatToken(detail.data.wallet.collateralBalanceRaw, detail.data.market.collateralToken, regionId)
+    : null;
+  return (
+    <>
+      {separated ? <ItemSeparator /> : null}
+      <Item
+        size="sm"
+        className="cursor-pointer border-0 text-left hover:bg-muted"
+        render={<Button variant="ghost" type="button" disabled={opportunity.availability.status === "unavailable"} />}
+        onClick={onOpen}
+      >
+        <ItemContent>
+          <ItemTitle>Borrow {opportunity.market.loanToken.symbol} against {opportunity.market.collateralToken.symbol}</ItemTitle>
+          <ItemDescription>
+            {opportunity.availability.status === "unavailable"
+              ? opportunity.availability.reason
+              : walletCollateral
+                ? `${walletCollateral} in wallet`
+                : detail.isPending
+                  ? "Checking wallet collateral…"
+                  : "Open market details"}
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant={opportunity.availability.status === "unavailable" ? "outline" : opportunity.availability.mode === "reducing-only" ? "destructive" : "secondary"}>
+            {opportunity.availability.status === "unavailable" ? "Unavailable" : opportunity.availability.mode === "reducing-only" ? "Reducing only" : "Enabled"}
+          </Badge>
+        </ItemActions>
+      </Item>
+    </>
+  );
+}
+
+function BorrowMarketDetail({
+  session,
+  fetchAccountResource,
+  prepareMoneyAction,
+  executeMoneyAction,
+  marketId,
+  onBack,
+  regionId,
+}: {
+  session: VerifiedAccountSession | null;
+  fetchAccountResource?: FetchAccountResource;
+  prepareMoneyAction?: PrepareMoneyAction;
+  executeMoneyAction?: ExecuteMoneyAction;
+  marketId: BorrowMarketId;
+  onBack: () => void;
+  regionId: RegionId;
+}) {
+  const detail = useBorrowDetail(session, marketId, fetchAccountResource, true);
+  const [dialog, setDialog] = useState<BorrowDialogState>(null);
+  const snapshot = detail.data ?? null;
+
+  return (
+    <section className="space-y-4" aria-labelledby="borrow-market-title">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <Button className="-ml-3" size="sm" variant="ghost" onClick={onBack}>All markets</Button>
+          <h1 className="text-2xl font-semibold tracking-tight" id="borrow-market-title">
+            {snapshot ? `Borrow ${snapshot.market.loanToken.symbol} against ${snapshot.market.collateralToken.symbol}` : "Borrow market"}
+          </h1>
+        </div>
+        {snapshot ? (
+          <Badge variant={snapshot.eligibility.mode === "reducing-only" ? "destructive" : "secondary"}>
+            {snapshot.eligibility.mode === "reducing-only" ? "Reducing only" : "Enabled"}
+          </Badge>
+        ) : null}
+      </div>
+
+      {!session?.smartAccount ? <BorrowNotice title="Sign in to view this market" /> : null}
+      {session?.smartAccount && detail.isPending ? <BorrowDetailLoading /> : null}
+      {session?.smartAccount && detail.isError && !snapshot ? (
+        <BorrowNotice
+          tone="error"
+          role="alert"
+          title="Market values are unavailable"
+          action={<Button variant="secondary" onClick={() => void detail.refetch()}>Retry</Button>}
+        >Wallet balances, position values, and limits could not be verified. They are not zero.</BorrowNotice>
+      ) : null}
+      {snapshot && detail.isFetching ? (
+        <BorrowNotice title="Refreshing market data">Showing the last verified values while current state loads.</BorrowNotice>
+      ) : null}
+      {snapshot ? (
+        <>
+          {snapshot.eligibility.mode === "reducing-only" || !snapshot.eligibility.newRisk ? (
+            <BorrowNotice tone="error" role="alert" title="New risk is unavailable">
+              {snapshot.eligibility.reason ?? "You can add collateral or repay, but cannot borrow more or withdraw collateral with debt."}
+            </BorrowNotice>
+          ) : null}
+          <BorrowMarketFacts snapshot={snapshot} regionId={regionId} />
+          <BorrowActions snapshot={snapshot} onOpen={(operation) => setDialog({ operation, snapshot })} />
+        </>
+      ) : null}
+
+      {dialog && session?.smartAccount && prepareMoneyAction && executeMoneyAction ? (
+        <BorrowMoneyDialog
+          key={`${dialog.snapshot.market.id}:${dialog.operation}`}
+          session={session}
+          snapshot={dialog.snapshot}
+          operation={dialog.operation}
+          prepareMoneyAction={prepareMoneyAction}
+          executeMoneyAction={executeMoneyAction}
+          regionId={regionId}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function BorrowMarketFacts({ snapshot, regionId }: { snapshot: BorrowMarketSnapshot; regionId: RegionId }) {
+  const risk = borrowRiskState(snapshot.position.healthFactorWad);
+  return (
+    <Card aria-labelledby="borrow-market-facts-title">
+      <CardHeader>
+        <CardTitle id="borrow-market-facts-title">Market and position</CardTitle>
+        <CardAction><Badge variant={risk === "urgent" || risk === "liquidatable" ? "destructive" : "outline"}>{borrowRiskCopy(risk)}</Badge></CardAction>
+      </CardHeader>
+      <CardContent className="px-2">
+        <ItemGroup className="gap-0">
+          <Metric label={`${snapshot.market.collateralToken.symbol} wallet`} value={formatToken(snapshot.wallet.collateralBalanceRaw, snapshot.market.collateralToken, regionId)} />
+          <Metric label="Isolated collateral" value={formatToken(snapshot.position.collateralRaw, snapshot.market.collateralToken, regionId)} separated />
+          <Metric label="Current debt" value={formatToken(snapshot.position.debtAssetsRaw, snapshot.market.loanToken, regionId)} separated />
+          <Metric label="Variable borrow rate" value={formatWadPercent(snapshot.state.borrowAprWad, regionId)} note="Current annualized rate; not fixed" separated />
+          <Metric label="Available liquidity" value={formatToken(snapshot.state.liquidityAssetsRaw, snapshot.market.loanToken, regionId)} separated />
+          <Metric label="LLTV" value={formatWadPercent(snapshot.market.lltvWad, regionId)} note="Liquidation threshold, not a target" separated />
+          <Metric label="Health" value={formatHealthFactor(snapshot.position.healthFactorWad, regionId)} note={borrowRiskDescription(snapshot.position.healthFactorWad)} separated />
+          <Metric label="Liquidation price" value={snapshot.position.liquidationPriceRaw ? `${formatOracleUsd(snapshot.position.liquidationPriceRaw, regionId)} / ${snapshot.market.collateralToken.symbol}` : "No debt"} separated />
+          <Metric label="Available to borrow" value={formatToken(snapshot.position.borrowCapacityAssetsRaw, snapshot.market.loanToken, regionId)} note={`Protocol limit ${formatToken(snapshot.position.rawBorrowCapacityAssetsRaw, snapshot.market.loanToken, regionId)}; Home applies its health floor`} separated />
+          <Metric label="Available to withdraw" value={formatToken(snapshot.position.withdrawableCollateralRaw, snapshot.market.collateralToken, regionId)} note={`Protocol limit ${formatToken(snapshot.position.rawWithdrawableCollateralRaw, snapshot.market.collateralToken, regionId)}; Home applies its health floor`} separated />
+        </ItemGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BorrowActions({ snapshot, onOpen }: { snapshot: BorrowMarketSnapshot; onOpen: (operation: BorrowOperation) => void }) {
+  const hasDebt = BigInt(snapshot.position.debtAssetsRaw) > BigInt(0);
+  const hasCollateral = BigInt(snapshot.position.collateralRaw) > BigInt(0);
+  const hasWalletCollateral = BigInt(snapshot.wallet.collateralBalanceRaw) > BigInt(0);
+  const hasWalletLoan = BigInt(snapshot.wallet.loanBalanceRaw) > BigInt(0);
+  const risk = borrowRiskState(snapshot.position.healthFactorWad);
+  const canNewRisk = snapshot.eligibility.newRisk && snapshot.eligibility.mode === "enabled" &&
+    risk !== "urgent" && risk !== "liquidatable";
+  const opensPosition = !hasCollateral;
+  const actions: Array<{ operation: BorrowOperation; disabled: boolean }> = [
+    {
+      operation: opensPosition ? "supply-and-borrow" : "borrow",
+      disabled: !canNewRisk || BigInt(snapshot.state.liquidityAssetsRaw) === BigInt(0) ||
+        (opensPosition ? !hasWalletCollateral : BigInt(snapshot.position.borrowCapacityAssetsRaw) === BigInt(0)),
     },
-    select: (value) => {
-      if (!owner) throw new Error("Borrowing is unavailable.");
-      const snapshot = parseSnapshot(value, owner);
-      if (!snapshot) throw new Error("Borrowing response is invalid.");
-      return snapshot;
-    },
-  });
-  const state: SnapshotState = !sessionKey
-    ? { status: "idle", snapshot: null }
-    : snapshotQuery.isPending
-      ? { status: "loading", snapshot: null }
-      : snapshotQuery.isError
-        ? { status: "error", snapshot: null }
-        : { status: "ready", snapshot: snapshotQuery.data };
-  const [operation, setOperation] =
-    useState<BorrowOperation>("supply-collateral");
-  const [amount, setAmount] = useState("");
-  const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
+    { operation: "supply-collateral", disabled: !hasWalletCollateral },
+    { operation: "repay", disabled: !hasDebt || !hasWalletLoan },
+    { operation: "repay-all", disabled: !hasDebt || !hasWalletLoan },
+    { operation: "withdraw-collateral", disabled: !hasCollateral || (hasDebt && !canNewRisk) || BigInt(snapshot.position.withdrawableCollateralRaw) === BigInt(0) },
+    { operation: "close-position", disabled: !hasCollateral && !hasDebt || (hasDebt && !hasWalletLoan) },
+  ];
+  return (
+    <Card aria-labelledby="borrow-actions-title">
+      <CardHeader><CardTitle id="borrow-actions-title">Actions</CardTitle></CardHeader>
+      <CardContent className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {actions.map(({ operation, disabled }) => (
+          <Button key={operation} variant={operation === "borrow" || operation === "supply-and-borrow" ? "default" : "secondary"} disabled={disabled} onClick={() => onOpen(operation)}>
+            {operationLabels[operation]}
+          </Button>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
-  const refresh = () => snapshotQuery.refetch();
+function BorrowMoneyDialog({
+  session,
+  snapshot,
+  operation,
+  prepareMoneyAction,
+  executeMoneyAction,
+  regionId,
+  onClose,
+}: {
+  session: VerifiedAccountSession;
+  snapshot: BorrowMarketSnapshot;
+  operation: BorrowOperation;
+  prepareMoneyAction: PrepareMoneyAction;
+  executeMoneyAction: ExecuteMoneyAction;
+  regionId: RegionId;
+  onClose: () => void;
+}) {
+  const queryClient = useHomeQueryClient(browserHomeQueryClient());
+  const dataOwnerKey = ownerDataKey(session);
+  const closesWithoutDebt = operation === "close-position" && BigInt(snapshot.position.debtAssetsRaw) === BigInt(0);
+  const maximumOperation = operation === "repay-all" || (operation === "close-position" && !closesWithoutDebt);
+  const primaryAsset = operation === "supply-collateral" || operation === "withdraw-collateral" || closesWithoutDebt
+    ? snapshot.market.collateralToken
+    : snapshot.market.loanToken;
+  const initialAmount = maximumOperation
+    ? decimalFromBaseUnits(snapshot.wallet.loanBalanceRaw, snapshot.market.loanToken.decimals) ?? ""
+    : "";
+  const primaryPricing = useMoneyAssetPricing(primaryAsset.symbol);
+  const collateralPricing = useMoneyAssetPricing(snapshot.market.collateralToken.symbol);
+  const [amount, setAmount] = useState(initialAmount);
+  const [amountChangeSource, setAmountChangeSource] = useState<MoneyAmountChangeSource>("programmatic");
+  const [collateralAmount, setCollateralAmount] = useState("");
+  const [collateralChangeSource, setCollateralChangeSource] = useState<MoneyAmountChangeSource>("programmatic");
+  const [preparedAction, setPreparedAction] = useState<PreparedMoneyAction | null>(null);
+  const [step, setStep] = useState<"amount" | "collateral" | "confirm" | "pending" | "error" | "failed">("amount");
+  const [error, setError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const title = step === "amount"
+    ? operationLabels[operation]
+    : step === "collateral"
+      ? "Add collateral"
+      : "Confirm";
+  const requiresPrimaryAmount = !closesWithoutDebt;
 
-  const snapshot = state.status === "ready" ? state.snapshot : null;
-  const actionAsset =
-    operation === "supply-collateral" || operation === "withdraw-collateral"
-      ? BORROW_COLLATERAL_TOKEN
-      : BORROW_LOAN_TOKEN;
-  const emptyWallet =
-    snapshot !== null &&
-    BigInt(snapshot.wallet.collateralBalanceRaw) === BigInt("0") &&
-    BigInt(snapshot.wallet.loanBalanceRaw) === BigInt("0") &&
-    BigInt(snapshot.position.collateralRaw) === BigInt("0") &&
-    BigInt(snapshot.position.borrowSharesRaw) === BigInt("0");
+  function closeIfAllowed() {
+    if (step === "pending") return false;
+    onClose();
+    return true;
+  }
 
-  async function submitPreview(event: React.FormEvent) {
-    event.preventDefault();
-    if (!snapshot || !prepareMoneyAction) return;
-    setPreview({ status: "loading" });
+  function goBack() {
+    setPreparedAction(null);
+    setAttempted(false);
+    setError(null);
+    setStep("amount");
+  }
+
+  async function prepare() {
     try {
-      const amountBaseUnits = parseClientTokenAmount(amount, actionAsset.decimals);
-      const action = await prepareMoneyAction(
-        actionKindForBorrowOperation(operation),
-        operation === "repay-all"
-          ? { marketId: snapshot.market.id, operation, maximumRepayBaseUnits: amountBaseUnits }
-          : { marketId: snapshot.market.id, operation, amountBaseUnits },
-      );
-      setPreview({ status: "prepared", action });
-    } catch (error) {
-      setPreview({
-        status: "error",
-        message: readableResourceError(error),
-      });
+      const amountBaseUnits = requiresPrimaryAmount
+        ? parseClientTokenAmount(amount, primaryAsset.decimals)
+        : undefined;
+      const collateralAmountBaseUnits = operation === "supply-and-borrow"
+        ? parseClientTokenAmount(collateralAmount, snapshot.market.collateralToken.decimals)
+        : undefined;
+      const intent = buildBorrowPreparedIntent({ snapshot, operation, amountBaseUnits, collateralAmountBaseUnits });
+      setError(null);
+      setStep("pending");
+      const action = await prepareMoneyAction(intent.kind, intent.params);
+      if (!preparedActionMatches(action, session, snapshot.market.id, intent.kind, intent.operation)) {
+        throw new Error("The prepared action did not match this verified account and Borrow market.");
+      }
+      setPreparedAction(action);
+      setStep("confirm");
+    } catch (caught) {
+      setPreparedAction(null);
+      setError(readableResourceError(caught));
+      setStep("amount");
     }
   }
 
-  const selectedLimit = useMemo<LimitPresentation | null>(() => {
-    if (!snapshot) return null;
-    switch (operation) {
-      case "supply-collateral":
-        return {
-          value: formatPresentationTokenAmount(
-            snapshot.wallet.collateralBalanceRaw,
-            8,
-            "cbBTC",
-            { regionId, useNoBreakSpace: true },
-          ),
-          suffix: "wallet balance",
-        };
-      case "borrow":
-        return {
-          value: formatPresentationTokenAmount(
-            snapshot.position.borrowCapacityAssetsRaw,
-            6,
-            "USDC",
-            { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-          ),
-          suffix: "current capacity",
-        };
-      case "repay":
-        return {
-          value: formatPresentationTokenAmount(
-            snapshot.position.debtAssetsRaw,
-            6,
-            "USDC",
-            { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-          ),
-          suffix: "current debt; enter less for an exact partial repayment",
-        };
-      case "repay-all":
-        return {
-          value: formatPresentationTokenAmount(
-            snapshot.position.debtAssetsRaw,
-            6,
-            "USDC",
-            { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-          ),
-          suffix: "current debt estimate; maximum cannot exceed",
-          secondValue: formatPresentationTokenAmount(
-            snapshot.wallet.loanBalanceRaw,
-            6,
-            "USDC",
-            { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-          ),
-          secondSuffix: "wallet balance",
-        };
-      case "supply-and-borrow":
-      case "close-position":
-        return null;
-      case "withdraw-collateral":
-        return {
-          value: formatPresentationTokenAmount(
-            snapshot.position.withdrawableCollateralRaw,
-            8,
-            "cbBTC",
-            { regionId, useNoBreakSpace: true },
-          ),
-          suffix: "currently withdrawable",
-        };
+  async function confirm() {
+    if (!preparedAction || step === "pending") return;
+    setError(null);
+    setStep("pending");
+    try {
+      const result = await executeMoneyAction(preparedAction);
+      setAttempted(true);
+      if (result.status === "rejected" || result.status === "failed") {
+        setError(result.status === "rejected" ? "The wallet request was rejected." : "The verified onchain receipt reported failure.");
+        setStep(result.status === "failed" ? "failed" : "error");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ownerQueryKey(dataOwnerKey, "borrow") });
+      onClose();
+    } catch {
+      setAttempted(true);
+      setError("The dispatch outcome is unresolved. Retry recording this same action; a new dispatch will not be created.");
+      setStep("confirm");
     }
-  }, [operation, snapshot, regionId]);
+  }
+
+  const availableBaseUnits = operation === "supply-collateral" || operation === "supply-and-borrow"
+    ? snapshot.wallet.collateralBalanceRaw
+    : operation === "withdraw-collateral"
+      ? snapshot.position.withdrawableCollateralRaw
+      : maximumOperation || operation === "repay"
+        ? snapshot.wallet.loanBalanceRaw
+        : snapshot.position.borrowCapacityAssetsRaw;
 
   return (
-    <main className="min-h-svh bg-background px-4 py-6 sm:py-10">
-      <section
-        className="mx-auto w-full max-w-4xl space-y-6"
-        aria-labelledby="borrow-title"
-      >
-        <nav
-          className="flex items-center justify-between gap-3"
-          aria-label="Borrow navigation"
-        >
-          <Link
-            className={buttonVariants({ variant: "link" })}
-            href="/dashboard"
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            Dashboard
-          </Link>
-          <span className="text-xs text-muted-foreground">Home · Base</span>
-        </nav>
-        <header>
-          <h1
-            className="text-2xl font-semibold tracking-tight"
-            id="borrow-title"
-          >
-            USDC against cbBTC
-          </h1>
-        </header>
-
-        {!sessionKey ? (
-          <BorrowNotice title="Sign in to view this wallet’s position" />
-        ) : null}
-        {sessionKey && state.status === "loading" ? (
-          <BorrowNotice title="Loading current market state" />
-        ) : null}
-        {sessionKey && state.status === "error" ? (
-          <BorrowNotice
-            tone="error"
-            role="alert"
-            title="Borrowing state unavailable"
-            action={
-              <Button
-                type="button"
-                variant="secondary"
-                size="lg"
-                onClick={() => void refresh()}
-              >
-                Retry
-              </Button>
-            }
-          >
-            Refresh to try again.
-          </BorrowNotice>
-        ) : null}
-
-        {snapshot ? (
+    <MoneyModal open labelledBy="borrow-action-title" describedBy={step === "pending" ? "borrow-action-pending" : undefined} onCancel={closeIfAllowed} onClose={onClose}>
+      <MoneyModalHeader title={title} titleId="borrow-action-title" onBack={step === "amount" || step === "pending" ? undefined : goBack} onClose={closeIfAllowed} closeDisabled={step === "pending"} closeLabel="Close Borrow action" />
+      <MoneyModalBody className="gap-4 pt-4">
+        {step === "amount" ? (
           <>
-            <p className="text-sm text-muted-foreground">
-              <time dateTime={blockTime(snapshot.source.blockTimestamp)}>
-                As of{" "}
-                {formatTime(
-                  blockTime(snapshot.source.blockTimestamp),
-                  regionId,
-                )}
-              </time>
-            </p>
-            <Card aria-labelledby="position-title">
-              <CardHeader>
-                <CardTitle>
-                  <h2 id="position-title">Wallet and position</h2>
-                </CardTitle>
-                <CardAction>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="lg"
-                    onClick={() => void refresh()}
-                  >
-                    Refresh
-                  </Button>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {emptyWallet ? (
-                  <Empty>
-                    <EmptyHeader>
-                      <EmptyTitle>
-                        This wallet has no cbBTC, USDC, or borrow position.
-                      </EmptyTitle>
-                    </EmptyHeader>
-                  </Empty>
+            {closesWithoutDebt ? (
+              <MoneyConfirmSummary
+                amount={formatToken(snapshot.position.collateralRaw, snapshot.market.collateralToken, regionId)}
+                lead="Withdraw all collateral"
+                rows={[{ label: "Market", value: marketPair(snapshot.market) }, { label: "Debt", value: "No debt" }]}
+              />
+            ) : (
+              <>
+                <MoneyAmountDisplay
+                  amount={amount}
+                  amountChangeSource={amountChangeSource}
+                  onAmountChange={(value, source) => { setAmount(value); setAmountChangeSource(source); }}
+                  availableLabel={maximumOperation ? "wallet maximum" : operation === "repay" ? "wallet balance" : "available"}
+                  availableAmount={decimalFromBaseUnits(availableBaseUnits, primaryAsset.decimals)}
+                  assetId={primaryAsset.id}
+                  assetLabel={primaryAsset.symbol}
+                  assetLocked
+                  chipSet="max"
+                  pricing={primaryPricing}
+                  nativeSymbol={primaryAsset.symbol}
+                />
+                {maximumOperation ? (
+                  <BorrowNotice title="Maximum repayment">
+                    Current debt is {formatToken(snapshot.position.debtAssetsRaw, snapshot.market.loanToken, regionId)}. The actual repayment is determined by current borrow shares and cannot exceed the amount you review.
+                  </BorrowNotice>
                 ) : null}
-                <ItemGroup>
-                  <Metric
-                    label="cbBTC wallet"
-                    value={formatPresentationTokenAmount(
-                      snapshot.wallet.collateralBalanceRaw,
-                      8,
-                      "cbBTC",
-                      { regionId, useNoBreakSpace: true },
-                    )}
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="USDC wallet"
-                    value={formatPresentationTokenAmount(
-                      snapshot.wallet.loanBalanceRaw,
-                      6,
-                      "USDC",
-                      { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-                    )}
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Collateral supplied"
-                    value={formatPresentationTokenAmount(
-                      snapshot.position.collateralRaw,
-                      8,
-                      "cbBTC",
-                      { regionId, useNoBreakSpace: true },
-                    )}
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Current debt"
-                    value={formatPresentationTokenAmount(
-                      snapshot.position.debtAssetsRaw,
-                      6,
-                      "USDC",
-                      { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-                    )}
-                    note="Rounded up from Morpho borrow shares"
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Current borrow capacity"
-                    value={formatPresentationTokenAmount(
-                      snapshot.position.borrowCapacityAssetsRaw,
-                      6,
-                      "USDC",
-                      { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-                    )}
-                    note="Lower of collateral limit and indexed liquidity"
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Currently withdrawable"
-                    value={formatPresentationTokenAmount(
-                      snapshot.position.withdrawableCollateralRaw,
-                      8,
-                      "cbBTC",
-                      { regionId, useNoBreakSpace: true },
-                    )}
-                    note="At the displayed oracle price"
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Health factor"
-                    value={formatHealthFactor(
-                      snapshot.position.healthFactorWad,
-                      regionId,
-                    )}
-                    note={healthNote(snapshot.position.healthFactorWad)}
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Liquidation price"
-                    value={
-                      snapshot.position.liquidationPriceRaw
-                        ? `${formatOracleUsd(snapshot.position.liquidationPriceRaw, regionId)} / cbBTC`
-                        : "No debt"
-                    }
-                    money={snapshot.position.liquidationPriceRaw !== null}
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Oracle price"
-                    value={`${formatOracleUsd(snapshot.state.oraclePriceRaw, regionId)} / cbBTC`}
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Variable borrow APR"
-                    value={formatWadPercent(
-                      snapshot.state.borrowAprWad,
-                      regionId,
-                    )}
-                    note="Current per-second rate annualized; not fixed"
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Indexed liquidity"
-                    value={formatPresentationTokenAmount(
-                      snapshot.state.liquidityAssetsRaw,
-                      6,
-                      "USDC",
-                      { cashCurrency: "USD", regionId, useNoBreakSpace: true },
-                    )}
-                    money
-                  />
-                  <ItemSeparator />
-                  <Metric
-                    label="Market state updated"
-                    value={formatTime(
-                      blockTime(snapshot.state.lastUpdateTimestamp),
-                      regionId,
-                    )}
-                  />
-                </ItemGroup>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <h2>Preview action</h2>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <form className="space-y-5" onSubmit={submitPreview}>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel id="borrow-operation-label">
-                        Action
-                      </FieldLabel>
-                      <Select
-                        value={operation}
-                        required
-                        onValueChange={(nextOperation) => {
-                          if (!nextOperation) return;
-                          setOperation(nextOperation as BorrowOperation);
-                          setAmount("");
-                          setPreview({ status: "idle" });
-                        }}
-                      >
-                        <SelectTrigger
-                          className="h-11 w-full"
-                          id="borrow-operation"
-                          aria-labelledby="borrow-operation-label"
-                        >
-                          <SelectValue>
-                            {(selectedOperation) =>
-                              BORROW_OPERATION_LABELS[
-                                selectedOperation as BorrowOperation
-                              ] ?? selectedOperation
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="supply-collateral">
-                            Supply cbBTC collateral
-                          </SelectItem>
-                          <SelectItem value="borrow">Borrow USDC</SelectItem>
-                          <SelectItem value="repay">
-                            Repay USDC (partial)
-                          </SelectItem>
-                          <SelectItem value="repay-all">
-                            Repay all USDC debt
-                          </SelectItem>
-                          <SelectItem value="withdraw-collateral">
-                            Withdraw cbBTC collateral
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="borrow-amount">{`${operation === "repay-all" ? "Maximum debit" : "Amount"} (${actionAsset.symbol})`}</FieldLabel>
-                      <Input
-                        className="h-11"
-                        id="borrow-amount"
-                        inputMode="decimal"
-                        autoComplete="off"
-                        required
-                        value={amount}
-                        onChange={(event) => {
-                          setAmount(event.target.value);
-                          setPreview({ status: "idle" });
-                        }}
-                        placeholder={
-                          actionAsset.decimals === 8 ? "0.00000000" : "0.00"
-                        }
-                      />
-                      {selectedLimit ? (
-                        <FieldDescription>
-                          <MoneyTicker
-                            className="min-w-0 align-bottom tabular-nums"
-                            value={selectedLimit.value}
-                          />{" "}
-                          {selectedLimit.suffix}
-                          {selectedLimit.secondValue ? (
-                            <>
-                              {" "}
-                              <MoneyTicker
-                                className="min-w-0 align-bottom tabular-nums"
-                                value={selectedLimit.secondValue}
-                              />{" "}
-                              {selectedLimit.secondSuffix}
-                            </>
-                          ) : null}
-                        </FieldDescription>
-                      ) : null}
-                    </Field>
-                  </FieldGroup>
-                  <Button className="h-11"
-                    size="lg"
-                    type="submit"
-                    disabled={!amount.trim() || preview.status === "loading"}
-                    aria-busy={preview.status === "loading"}
-                  >
-                    {preview.status === "loading"
-                      ? "Checking RPC simulation…"
-                      : "Review current preview"}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                <MoneyNumpad value={amount} maxDecimals={primaryAsset.decimals} onChange={(value, source) => { setAmount(value); setAmountChangeSource(source); }} />
+              </>
+            )}
           </>
         ) : null}
 
-        {preview.status === "error" ? (
-          <BorrowNotice tone="error" role="alert" title="Preview unavailable">
-            {preview.message}
-          </BorrowNotice>
+        {step === "collateral" ? (
+          <>
+            <MoneyAmountDisplay
+              amount={collateralAmount}
+              amountChangeSource={collateralChangeSource}
+              onAmountChange={(value, source) => { setCollateralAmount(value); setCollateralChangeSource(source); }}
+              availableLabel="wallet collateral"
+              availableAmount={decimalFromBaseUnits(snapshot.wallet.collateralBalanceRaw, snapshot.market.collateralToken.decimals)}
+              assetId={snapshot.market.collateralToken.id}
+              assetLabel={snapshot.market.collateralToken.symbol}
+              assetLocked
+              chipSet="max"
+              pricing={collateralPricing}
+              nativeSymbol={snapshot.market.collateralToken.symbol}
+            />
+            <MoneyNumpad value={collateralAmount} maxDecimals={snapshot.market.collateralToken.decimals} onChange={(value, source) => { setCollateralAmount(value); setCollateralChangeSource(source); }} />
+          </>
         ) : null}
-        {preview.status === "preview-only" ? (
-          <Card aria-labelledby="preview-only-title">
-            <CardHeader>
-              <CardTitle>
-                <h2 id="preview-only-title">Read-only preview</h2>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-start justify-between gap-4">
-                <strong className="text-sm font-medium">
-                  {preview.response.preview.title}
-                </strong>
-                <span className="text-sm tabular-nums">
-                  <MoneyTicker
-                    value={formatPresentationTokenAmount(
-                      preview.response.preview.amount.amountBaseUnits,
-                      preview.response.preview.amount.decimals,
-                      preview.response.preview.amount.symbol,
-                      { regionId, useNoBreakSpace: true },
-                    )}
-                  />
-                </span>
-              </div>
-              <ul className="list-disc space-y-1 pl-4">
-                {preview.response.preview.warnings.map((warning) => (
-                  <li className="text-sm text-muted-foreground" key={warning}>
-                    {warning}
-                  </li>
-                ))}
-              </ul>
-              <p className="text-sm text-muted-foreground">
-                {preview.response.preview.disabledReason}
-              </p>
-            </CardContent>
-          </Card>
-        ) : null}
-      </section>
 
-      {preview.status === "prepared" ? (
-        <MoneyActionReview
-          action={preview.action}
-          execute={executeMoneyAction}
-          onClose={() => setPreview({ status: "idle" })}
-          onConfirmed={() => {
-            setPreview({ status: "idle" });
-            setAmount("");
-          }}
+        {preparedAction && step !== "amount" && step !== "collateral" ? (
+          <BorrowPreparedReview action={preparedAction} snapshot={snapshot} regionId={regionId} />
+        ) : null}
+        {step === "pending" ? <BorrowNotice title={<span className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />Waiting for your wallet…</span>} /> : null}
+        {error ? <BorrowNotice tone="error" role="alert" title="Borrow action unavailable">{error}</BorrowNotice> : null}
+      </MoneyModalBody>
+      {step === "amount" ? (
+        <MoneyModalFooter
+          primaryLabel="Continue"
+          primaryDisabled={requiresPrimaryAmount && !isPositiveDecimalAmount(amount)}
+          onPrimary={() => operation === "supply-and-borrow" ? setStep("collateral") : void prepare()}
         />
       ) : null}
-    </main>
+      {step === "collateral" ? (
+        <MoneyModalFooter
+          primaryLabel="Review"
+          primaryDisabled={!isPositiveDecimalAmount(collateralAmount)}
+          onPrimary={() => void prepare()}
+        />
+      ) : null}
+      {step === "confirm" ? <MoneyModalFooter primaryLabel={attempted ? "Retry" : "Confirm action"} onPrimary={() => void confirm()} secondaryLabel="Back" onSecondary={goBack} /> : null}
+      {step === "error" || step === "failed" ? <MoneyModalFooter primaryLabel="Back" onPrimary={goBack} secondaryLabel="Close" onSecondary={closeIfAllowed} /> : null}
+    </MoneyModal>
   );
 }
 
-function Metric({
-  label,
-  value,
-  note,
-  money = false,
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  money?: boolean;
-}) {
+function BorrowPreparedReview({ action, snapshot, regionId }: { action: PreparedMoneyAction; snapshot: BorrowMarketSnapshot; regionId: RegionId }) {
+  const metadata = action.metadata?.product === "borrow" ? action.metadata : null;
+  const primary = action.amounts[0];
+  const amount = primary
+    ? `${primary.maximum ? "Up to " : ""}${formatExactPresentationTokenAmount(primary.amountBaseUnits, primary.decimals, primary.symbol)}`
+    : action.title;
+  const movementRows = action.amounts.map((entry) => ({
+    label: `${entry.maximum ? "Maximum repayment" : entry.direction === "spend" ? "You spend" : "You receive"} (${entry.symbol})`,
+    value: `${entry.estimated ? "Estimated " : ""}${formatExactPresentationTokenAmount(entry.amountBaseUnits, entry.decimals, entry.symbol)}`,
+  }));
   return (
-    <Item variant="muted" size="sm" render={<li />}>
-      <ItemContent className="min-w-0">
-        <ItemTitle>{label}</ItemTitle>
-        {note ? <ItemDescription>{note}</ItemDescription> : null}
-      </ItemContent>
-      <ItemActions className="ml-auto max-w-1/2 justify-end text-right text-sm tabular-nums">
-        {money ? <MoneyTicker value={value} /> : value}
-      </ItemActions>
-    </Item>
+    <MoneyConfirmSummary
+      amount={amount}
+      lead={action.title}
+      rows={[
+        { label: "Market", value: marketPair(snapshot.market) },
+        ...movementRows,
+        { label: "Variable rate", value: formatWadPercent(snapshot.state.borrowAprWad, regionId) },
+        { label: "LLTV", value: formatWadPercent(snapshot.market.lltvWad, regionId) },
+        { label: "Projected health", value: formatHealthFactor(metadata?.projectedHealthFactorWad ?? snapshot.position.healthFactorWad, regionId) },
+        { label: "Liquidation price", value: metadata?.projectedLiquidationPriceRaw ? `${formatOracleUsd(metadata.projectedLiquidationPriceRaw, regionId)} / ${snapshot.market.collateralToken.symbol}` : "No debt" },
+      ]}
+    />
   );
 }
 
-function BorrowNotice({
-  action,
-  children,
-  className,
-  role = "status",
-  title,
-  tone = "neutral",
-}: {
-  action?: React.ReactNode;
-  children?: React.ReactNode;
-  className?: string;
-  role?: "status" | "alert";
-  title?: React.ReactNode;
-  tone?: "neutral" | "error";
-}) {
+function Metric({ label, value, note, separated = false }: { label: string; value: string; note?: string; separated?: boolean }) {
   return (
-    <Alert
-      className={className}
-      role={role}
-      variant={tone === "error" ? "destructive" : "default"}
-    >
+    <>
+      {separated ? <ItemSeparator /> : null}
+      <Item variant="muted" size="sm" render={<li />}>
+        <ItemContent><ItemTitle>{label}</ItemTitle>{note ? <ItemDescription>{note}</ItemDescription> : null}</ItemContent>
+        <ItemActions className="ml-auto max-w-1/2 justify-end text-right text-sm tabular-nums"><MoneyTicker value={value} /></ItemActions>
+      </Item>
+    </>
+  );
+}
+
+function BorrowOverviewLoading() {
+  return <Card aria-busy="true"><CardContent className="space-y-3 py-5"><Skeleton className="h-5 w-36" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><span className="sr-only">Loading Borrow overview</span></CardContent></Card>;
+}
+
+function BorrowDetailLoading() {
+  return <Card aria-busy="true"><CardContent className="space-y-3 py-5">{Array.from({ length: 6 }, (_, index) => <Skeleton className="h-10 w-full" key={index} />)}<span className="sr-only">Loading Borrow market</span></CardContent></Card>;
+}
+
+function BorrowNotice({ action, children, role = "status", title, tone = "neutral" }: { action?: ReactNode; children?: ReactNode; role?: "status" | "alert"; title?: ReactNode; tone?: "neutral" | "error" }) {
+  return (
+    <Alert role={role} variant={tone === "error" ? "destructive" : "default"}>
       {title ? <AlertTitle>{title}</AlertTitle> : null}
       {children ? <AlertDescription>{children}</AlertDescription> : null}
       {action ? <AlertAction>{action}</AlertAction> : null}
     </Alert>
   );
 }
-function healthNote(raw: string | null) {
-  if (raw === null) return "No active liquidation threshold";
-  const health = BigInt(raw);
-  if (health < BORROW_LIQUIDATION_HEALTH_WAD)
-    return "At or below the indexed liquidation threshold";
-  if (health < BORROW_HEALTH_CRITICAL_WAD)
-    return "Very close to liquidation";
-  if (health < BORROW_HEALTH_FLOOR_WAD)
-    return "Below Home's new-risk health floor";
-  if (health < BORROW_HEALTH_BUFFER_WAD)
-    return "Limited liquidation buffer";
-  return "Above the indexed liquidation threshold";
-}
 
-function blockTime(seconds: string) {
-  return new Date(Number(seconds) * 1_000).toISOString();
-}
-
-function formatTime(value: string, regionId: RegionId) {
-  return formatPresentationDate(value, { regionId, style: "date-time-zone" });
-}
-
-function usePersistedPresentationRegion(): RegionId {
-  const [regionId] = useState<RegionId>(() => {
-    if (typeof window === "undefined") return "GLOBAL";
-    return resolvePresentation({
-      persistedCountry: readAnonymousCountryPreference(
-        () => window.localStorage,
-      ),
-    }).region.id;
+function useBorrowOverview(session: VerifiedAccountSession | null, fetchAccountResource?: FetchAccountResource) {
+  const owner = session?.smartAccount?.address ?? null;
+  const key = session?.smartAccount ? ownerDataKey(session) : null;
+  return useHomeQuery({
+    queryKey: key ? ownerQueryKey(key, "borrow", "overview") : ["unauthenticated", "borrow-overview-disabled"],
+    enabled: Boolean(key && owner && fetchAccountResource),
+    staleTime: 15_000,
+    retry: false,
+    refetchOnWindowFocus: true,
+    meta: key ? ownerQueryMeta(key, "owner") : undefined,
+    queryFn: ({ signal }) => {
+      if (!fetchAccountResource) throw new Error("Borrow is unavailable.");
+      return fetchAccountResource("/api/borrow", { signal });
+    },
+    select: (value): BorrowOverviewResponse => {
+      if (!owner) throw new Error("Borrow is unavailable.");
+      const parsed = parseBorrowOverview(value, owner);
+      if (!parsed) throw new Error("Borrow overview response is invalid.");
+      return parsed;
+    },
   });
-  return regionId;
+}
+
+function useBorrowDetail(session: VerifiedAccountSession | null, marketId: BorrowMarketId, fetchAccountResource: FetchAccountResource | undefined, enabled: boolean) {
+  const owner = session?.smartAccount?.address ?? null;
+  const key = session?.smartAccount ? ownerDataKey(session) : null;
+  return useHomeQuery({
+    queryKey: key ? ownerQueryKey(key, "borrow", "detail", marketId) : ["unauthenticated", "borrow-detail-disabled", marketId],
+    enabled: Boolean(enabled && key && owner && fetchAccountResource),
+    staleTime: 15_000,
+    retry: false,
+    refetchOnWindowFocus: true,
+    meta: key ? ownerQueryMeta(key, "owner") : undefined,
+    queryFn: ({ signal }) => {
+      if (!fetchAccountResource) throw new Error("Borrow is unavailable.");
+      return fetchAccountResource(`/api/borrow/markets/${marketId}`, { signal });
+    },
+    select: (value): BorrowMarketSnapshot => {
+      if (!owner) throw new Error("Borrow is unavailable.");
+      const parsed = parseSnapshot(value, owner);
+      if (!parsed) throw new Error("Borrow market response is invalid.");
+      return parsed;
+    },
+  });
+}
+
+function marketPair(market: BorrowMarketIdentity): string {
+  return `${market.loanToken.symbol} / ${market.collateralToken.symbol}`;
+}
+
+function formatToken(raw: string, asset: BorrowMarketIdentity["loanToken"], regionId: RegionId): string {
+  return formatPresentationTokenAmount(raw, asset.decimals, asset.symbol, {
+    ...(asset.symbol === "USDC" ? { cashCurrency: "USD" as const } : {}),
+    regionId,
+    useNoBreakSpace: true,
+  });
 }
 
 function parseClientTokenAmount(value: string, decimals: number): string {
@@ -779,12 +864,15 @@ function parseClientTokenAmount(value: string, decimals: number): string {
   return amount.toString(10);
 }
 
-function readableResourceError(error: unknown) {
-  if (
-    error instanceof Error &&
-    error.message &&
-    error.message !== "Authenticated resource is unavailable."
-  )
-    return error.message;
-  return "The current limit or RPC simulation could not be verified. Refresh and try again.";
+function preparedActionMatches(action: PreparedMoneyAction, session: VerifiedAccountSession, marketId: BorrowMarketId, kind: PreparedMoneyAction["kind"], operation: BorrowOperation): boolean {
+  return Boolean(session.smartAccount && action.kind === kind && action.owner.subject === session.user.subject &&
+    action.owner.accountProvider === session.accountProvider &&
+    action.owner.address.toLowerCase() === session.smartAccount.address.toLowerCase() &&
+    action.metadata?.product === "borrow" && action.metadata.operation === operation &&
+    action.metadata.marketId.toLowerCase() === marketId.toLowerCase());
+}
+
+function readableResourceError(error: unknown): string {
+  if (error instanceof Error && error.message && error.message !== "Authenticated resource is unavailable.") return error.message;
+  return "The current limit or Base simulation could not be verified. Refresh and try again. No transaction was submitted.";
 }

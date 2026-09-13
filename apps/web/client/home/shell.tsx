@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { AccountSignInSheet } from "@/client/account/account-screen";
 import { useAccountWallet } from "@/client/account/cdp-client";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
+import type { BorrowMarketId } from "@/shared/borrowing/config";
 import {
   balancesPanelId,
   isHomeNestedPanelId,
@@ -128,6 +129,7 @@ export function HomeShell({
   const [urlIntent, setUrlIntent] = useState<HomeInboundPanelState>(initialUrlIntent);
   const [popRevision, setPopRevision] = useState(0);
   const [settingsOpenedInApp, setSettingsOpenedInApp] = useState(false);
+  const [borrowMarketOpenedInApp, setBorrowMarketOpenedInApp] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const shellPath = routeMode === "landing" ? "/" : "/dashboard";
   const investChrome = useOptionalAppChrome();
@@ -219,6 +221,7 @@ export function HomeShell({
       const intent = readHomeInboundPanelState(new URLSearchParams(window.location.search));
       const restoresBalances = intent.panel === balancesPanelId && isBalancesRestoreArmed();
       pendingBalancesRestoreRef.current = restoresBalances;
+      setBorrowMarketOpenedInApp(false);
       applyUrlState(intent);
       setPopRevision((revision) => revision + 1);
       if (intent.panel === balancesPanelId && !restoresBalances) {
@@ -348,10 +351,16 @@ export function HomeShell({
     }
   }, [isSignedOut, routeMode, router]);
 
-  function navigateTo(nextNavigation: ShellPanelId, group: MoneyGroupId | null = null) {
-    const skipHistory = activeNavigation === nextNavigation && !isAccountSettingsOpen;
+  function navigateTo(
+    nextNavigation: ShellPanelId,
+    group: MoneyGroupId | null = null,
+    market: BorrowMarketId | null = null,
+  ) {
+    const skipHistory = activeNavigation === nextNavigation && !isAccountSettingsOpen &&
+      (nextNavigation !== "borrow" || urlIntent.location.market === market);
     setIsAccountSettingsOpen(false);
     setSettingsOpenedInApp(false);
+    if (nextNavigation !== "borrow") setBorrowMarketOpenedInApp(false);
     if (!skipHistory) {
       setForwardRequest((request) => request + 1);
       const mayOpenAssetDetail = activeNavigation === balancesPanelId && nextNavigation === "invest";
@@ -372,9 +381,25 @@ export function HomeShell({
     if (nextNavigation === balancesPanelId) setBalancesMounted(true);
     setNavigationRequest((request) => request + 1);
     if (!skipHistory) {
-      commitClientUrl(homePanelHref(shellPath, nextNavigation, group));
+      commitClientUrl(homePanelHref(shellPath, nextNavigation, group, market));
       setUrlIntent(readHomeInboundPanelState(new URLSearchParams(window.location.search)));
     }
+  }
+
+  function selectBorrowMarket(market: BorrowMarketId | null) {
+    if (market) {
+      setBorrowMarketOpenedInApp(true);
+      navigateTo("borrow", null, market);
+      return;
+    }
+    if (borrowMarketOpenedInApp) {
+      setBorrowMarketOpenedInApp(false);
+      window.history.back();
+      return;
+    }
+    commitClientUrl(homePanelHref(shellPath, "borrow"), "replace");
+    applyUrlState(readHomeInboundPanelState(new URLSearchParams(window.location.search)));
+    setNavigationRequest((request) => request + 1);
   }
 
   function openAccountSettings() {
@@ -395,6 +420,7 @@ export function HomeShell({
       shelf: current.shelf,
       asset: current.asset,
       group: current.group,
+      market: current.market,
     }));
   }
 
@@ -424,6 +450,7 @@ export function HomeShell({
       shelf: current.shelf,
       asset: current.asset,
       group: current.group,
+      market: current.market,
     }), "replace");
   }
 
@@ -451,7 +478,9 @@ export function HomeShell({
     ? "Back"
     : investChrome?.nested?.backLabel ?? "Back";
   const onNestedChromeBack = isHomeNestedPanelId(activeNavigation)
-    ? () => navigateTo("home")
+    ? activeNavigation === "borrow" && urlIntent.location.market
+      ? () => selectBorrowMarket(null)
+      : () => navigateTo("home")
     : investChrome?.nested?.onBack ?? (() => {});
 
   const routingValue = useMemo(() => ({
@@ -512,6 +541,8 @@ export function HomeShell({
           fetchActivity={account.fetchActivity}
           fetchOperations={account.fetchOperations}
           navigateTo={navigateTo}
+          borrowMarket={urlIntent.location.market}
+          onSelectBorrowMarket={selectBorrowMarket}
           urlAddMoney={urlAddMoney}
           urlReturnedFromProvider={urlReturnedFromProvider}
           urlSendFlow={urlSendFlow}

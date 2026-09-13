@@ -5,6 +5,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ComponentProps } from "react";
 import type { AccountWalletSdkBoundary } from "@/client/account/cdp-client";
 import type { SessionFetch, VerifiedAccountSession } from "@/client/account/session-client";
+import { BORROW_MARKET_ID } from "@/shared/borrowing/config";
 
 const replaceCalls: string[] = [];
 const pushCalls: string[] = [];
@@ -395,6 +396,34 @@ describe("Home shell routing and intents", () => {
 
     act(() => popHistory());
     expect(page().getByRole("heading", { name: "Your money" })).toBeTruthy();
+  });
+
+  test("opens Borrow from the Home card without adding a bottom navigation item", async () => {
+    render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} />);
+    await waitForVerifiedShell();
+
+    fireEvent.click(page().getByRole("button", { name: "Borrow" }));
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/dashboard?panel=borrow");
+    expect(await page().findByText("Borrow from verified isolated markets on Base.")).toBeTruthy();
+    expect(within(page().getByRole("navigation", { name: "Main navigation" })).queryByRole("button", { name: "Borrow" })).toBeNull();
+  });
+
+  test("renders a validated Borrow market deep link inside the existing main landmark", async () => {
+    syncLocation(`/dashboard?panel=borrow&market=${BORROW_MARKET_ID}`);
+    historyEntries = [`/dashboard?panel=borrow&market=${BORROW_MARKET_ID}`];
+    render(
+      <HomeHarness
+        accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })}
+        initialSearch={`panel=borrow&market=${BORROW_MARKET_ID}`}
+        applyInboundUrlIntent
+      />,
+    );
+
+    await waitForVerifiedShell();
+    fireEvent.click(await page().findByRole("button", { name: "All markets" }));
+    expect(page().getAllByRole("main")).toHaveLength(1);
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/dashboard?panel=borrow");
+    expect(await page().findByText("Borrow from verified isolated markets on Base.")).toBeTruthy();
   });
 
   test("honors server-selected panel state without adding history", async () => {

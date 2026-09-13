@@ -15,6 +15,7 @@ import type { FetchActivity } from "@/client/activity";
 import type { AssetMarkResolution } from "@/client/asset-mark/presentation";
 import { FundingActions } from "@/client/funding/funding-actions";
 import { SavingsTeaser } from "@/client/savings/savings-teaser";
+import { AuthenticatedBorrowTeaser } from "@/client/borrowing/borrowing-experience";
 import { TransferActions } from "@/client/transfers";
 import type { MoneyGroupPresentation } from "@/shared/balances/present";
 import type { TransferAssetAvailability } from "@/shared/transfers/types";
@@ -57,6 +58,7 @@ export function HomePanel({
   fetchActivity,
   fetchOperations,
   onOpenSave,
+  onOpenBorrow,
   onOpenBalances,
   onOpenActivity,
   initialAddMoney = false,
@@ -72,6 +74,7 @@ export function HomePanel({
   fetchActivity: FetchActivity;
   fetchOperations: (signal?: AbortSignal) => Promise<unknown>;
   onOpenSave: () => void;
+  onOpenBorrow: () => void;
   onOpenBalances: (group?: MoneyGroupPresentation["id"]) => void;
   onOpenActivity: () => void;
   initialAddMoney?: boolean;
@@ -169,16 +172,29 @@ export function HomePanel({
         </Card>
       </section>
 
-      <section aria-labelledby="save-heading">
-        <Card>
-          <CardHeader>
-            <CardTitle id="save-heading" role="heading" aria-level={2}>Save</CardTitle>
-          </CardHeader>
-          <CardContent className="px-2">
-            <SavingsTeaser onOpen={onOpenSave} />
-          </CardContent>
-        </Card>
-      </section>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <section aria-labelledby="save-heading">
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle id="save-heading" role="heading" aria-level={2}>Save</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2">
+              <SavingsTeaser onOpen={onOpenSave} />
+            </CardContent>
+          </Card>
+        </section>
+
+        <section aria-labelledby="borrow-heading">
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle id="borrow-heading" role="heading" aria-level={2}>Borrow</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2">
+              <AuthenticatedBorrowTeaser onOpen={onOpenBorrow} regionId={regionId} />
+            </CardContent>
+          </Card>
+        </section>
+      </div>
 
       {showSessionShimmer ? (
         <section aria-labelledby="activity-title" aria-busy="true">
