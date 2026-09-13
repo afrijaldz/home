@@ -4,10 +4,7 @@ import {
   validateAccountSession,
   type SessionFetch,
 } from "./session-client";
-import {
-  ACCOUNT_PROVIDER_HEADER,
-  isBaseAccountEnabled,
-} from "@/shared/account/session-types";
+import { ACCOUNT_PROVIDER_HEADER } from "@/shared/account/session-types";
 
 const TEST_ADDRESS = "0x1111111111111111111111111111111111111111";
 
@@ -25,12 +22,6 @@ describe("account project configuration", () => {
     expect(normalizeProjectId(" test-project ")).toBe("test-project");
   });
 
-  test("enables Base Account only for the explicit operator value", () => {
-    expect(isBaseAccountEnabled(undefined)).toBe(false);
-    expect(isBaseAccountEnabled("")).toBe(false);
-    expect(isBaseAccountEnabled("true")).toBe(false);
-    expect(isBaseAccountEnabled("1")).toBe(true);
-  });
 });
 
 describe("session validation boundary", () => {
@@ -133,6 +124,34 @@ describe("session validation boundary", () => {
     );
 
     expect(session.smartAccount).toBeNull();
+  });
+
+  test("maps only the disabled Base Account response to provider-disabled", async () => {
+    const rows = [
+      {
+        status: 403,
+        payload: { error: { code: "BASE_ACCOUNT_DISABLED" } },
+        reason: "provider-disabled",
+      },
+      {
+        status: 403,
+        payload: { error: { code: "FORBIDDEN" } },
+        reason: "unavailable",
+      },
+      {
+        status: 500,
+        payload: { error: { code: "BASE_ACCOUNT_DISABLED" } },
+        reason: "unavailable",
+      },
+    ] as const;
+
+    for (const row of rows) {
+      await expect(validateAccountSession(
+        "test-access-token",
+        undefined,
+        async () => jsonResponse(row.payload, row.status),
+      )).rejects.toMatchObject({ reason: row.reason });
+    }
   });
 
   test("fails closed for unauthorized and malformed responses", async () => {
