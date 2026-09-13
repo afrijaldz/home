@@ -1,16 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ItemGroup } from "@/components/ui/item";
 import { MoneyTicker } from "@/components/money-ticker";
 import { CurrencyMark } from "@/components/currency-mark";
 import { BalanceRow } from "@/components/finance-rows";
-import {
-  presentPortfolioAssetMark,
-  type AssetMarkResolution,
-} from "@/client/asset-mark/presentation";
+import { presentPortfolioAssetMark } from "@/client/asset-mark/presentation";
 import type { RegionId } from "@/config/regions";
 import type { BalanceRowModel, BalancesPresentation } from "@/shared/balances/present";
 import { ShimmerRows } from "./panel-shared";
@@ -78,21 +76,22 @@ export function useBalancesRevealWindow(
 export function BalancesPage({
   active,
   assetBalances,
-  assetMarkResolution,
+  showSmallBalances,
+  onShowSmallBalancesChange,
   isChecking,
   revealedCount,
   onRevealMore,
 }: {
   active: boolean;
   assetBalances?: BalancesPresentation;
-  assetMarkResolution?: AssetMarkResolution;
+  showSmallBalances: boolean;
+  onShowSmallBalancesChange: (value: boolean) => void;
   isChecking: boolean;
   revealedCount: number;
   onRevealMore: () => void;
 }) {
   const isLoading = assetBalances?.status === "loading" || isChecking;
-  const balanceStatusLabel =
-    assetBalances?.totalStatus === "partial" ? undefined : assetBalances?.statusLabel;
+  const balanceStatusLabel = assetBalances?.statusLabel;
   const showBalanceStatus =
     assetBalances?.status !== "loading" && Boolean(balanceStatusLabel);
   return (
@@ -109,7 +108,9 @@ export function BalancesPage({
             rows={assetBalances?.rows ?? []}
             isLoading={isLoading}
             isUnavailable={assetBalances?.status === "unavailable"}
-            assetMarkResolution={assetMarkResolution}
+            hiddenCount={assetBalances?.hiddenCount ?? 0}
+            showSmallBalances={showSmallBalances}
+            onShowSmallBalancesChange={onShowSmallBalancesChange}
             revealedCount={revealedCount}
             onRevealMore={onRevealMore}
           />
@@ -123,15 +124,13 @@ export function HomeBalancesList({
   rows,
   isLoading,
   isUnavailable = false,
-  assetMarkResolution,
 }: {
   rows: readonly BalanceRowModel[];
   isLoading: boolean;
   isUnavailable?: boolean;
-  assetMarkResolution?: AssetMarkResolution;
 }) {
   if (rows.length > 0) {
-    return <BalancesList rows={rows} assetMarkResolution={assetMarkResolution} />;
+    return <BalancesList rows={rows} />;
   }
   if (isLoading) return <ShimmerRows count={2} />;
   if (isUnavailable) return null;
@@ -143,7 +142,9 @@ function IncrementalBalancesList({
   rows,
   isLoading,
   isUnavailable = false,
-  assetMarkResolution,
+  hiddenCount,
+  showSmallBalances,
+  onShowSmallBalancesChange,
   revealedCount,
   onRevealMore,
 }: {
@@ -151,7 +152,9 @@ function IncrementalBalancesList({
   rows: readonly BalanceRowModel[];
   isLoading: boolean;
   isUnavailable?: boolean;
-  assetMarkResolution?: AssetMarkResolution;
+  hiddenCount: number;
+  showSmallBalances: boolean;
+  onShowSmallBalancesChange: (value: boolean) => void;
   revealedCount: number;
   onRevealMore: () => void;
 }) {
@@ -183,10 +186,14 @@ function IncrementalBalancesList({
 
   return (
     <>
-      <BalancesList
-        rows={rows.slice(0, count)}
-        assetMarkResolution={assetMarkResolution}
-      />
+      <BalancesList rows={rows.slice(0, count)} />
+      {!hasMore && hiddenCount > 0 ? (
+        <SmallBalancesControl
+          hiddenCount={hiddenCount}
+          showSmallBalances={showSmallBalances}
+          onShowSmallBalancesChange={onShowSmallBalancesChange}
+        />
+      ) : null}
       {active && hasMore ? (
         <div ref={sentinelRef} className="h-px" aria-hidden="true" />
       ) : null}
@@ -196,23 +203,55 @@ function IncrementalBalancesList({
 
 function BalancesList({
   rows,
-  assetMarkResolution,
 }: {
   rows: readonly BalanceRowModel[];
-  assetMarkResolution?: AssetMarkResolution;
 }) {
   return (
     <ItemGroup className="gap-0">
       <ul className="list-none p-0" data-balance-list="">
         {rows.map((row) => (
-          <HomeBalanceRowView
-            key={row.key}
-            row={row}
-            assetMarkResolution={assetMarkResolution}
-          />
+          <HomeBalanceRowView key={row.key} row={row} />
         ))}
       </ul>
     </ItemGroup>
+  );
+}
+
+function SmallBalancesControl({
+  hiddenCount,
+  showSmallBalances,
+  onShowSmallBalancesChange,
+}: {
+  hiddenCount: number;
+  showSmallBalances: boolean;
+  onShowSmallBalancesChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex min-h-16 items-center justify-center px-3 text-sm text-muted-foreground">
+      {showSmallBalances ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => onShowSmallBalancesChange(false)}
+        >
+          Hide small balances
+        </Button>
+      ) : (
+        <p>
+          {hiddenCount} small {hiddenCount === 1 ? "balance" : "balances"} hidden ·{" "}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-auto px-1 py-0"
+            onClick={() => onShowSmallBalancesChange(true)}
+          >
+            Show
+          </Button>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -228,10 +267,8 @@ function BalancesEmpty() {
 
 export function HomeBalanceRowView({
   row,
-  assetMarkResolution,
 }: {
   row: BalanceRowModel;
-  assetMarkResolution?: AssetMarkResolution;
 }) {
   const symbolMark = row.mark.kind === "symbol"
     ? presentPortfolioAssetMark(
@@ -241,7 +278,6 @@ export function HomeBalanceRowView({
           symbol: row.mark.symbol,
           currency: null,
         },
-        assetMarkResolution,
       )
     : null;
   const icon = row.mark.kind === "flag"

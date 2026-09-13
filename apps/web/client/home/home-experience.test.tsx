@@ -138,6 +138,8 @@ function HomeHarness({
           status: "ready",
           displayTotal: "$12.34",
           totalStatus: "complete",
+          hiddenRows: [],
+          hiddenCount: 0,
           rows: [{
             key: "usdc",
             group: "cash",

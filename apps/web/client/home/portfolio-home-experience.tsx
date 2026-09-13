@@ -8,11 +8,13 @@ import { resolvePresentation, type RegionId } from "@/config/regions";
 import { HomeExperience } from "./home-shell-provider";
 import { deriveSendAvailability } from "./send-availability";
 import type { HomeExperienceProps } from "./home-types";
+import { useShowSmallBalances } from "./use-show-small-balances";
 
 export function PortfolioHomeExperience(
   props: Omit<HomeExperienceProps, "assetBalances" | "sendAvailability">,
 ) {
   const account = useAccountWallet();
+  const [showSmallBalances, setShowSmallBalances] = useShowSmallBalances();
   const [selectedRegion, setSelectedRegion] = useState<RegionId>(
     () => resolvePresentation({ detectedCountry: props.detectedCountry }).region.id,
   );
@@ -27,7 +29,10 @@ export function PortfolioHomeExperience(
   const balances = useBalances(session, selectedRegion, account.fetchBalances, {
     enabled: account.verification === "server",
   });
-  const presentation = useMemo(() => presentBalances(balances), [balances]);
+  const presentation = useMemo(
+    () => presentBalances(balances, { showSmallBalances }),
+    [balances, showSmallBalances],
+  );
   const sendAvailability = useMemo(
     () => balances.snapshot ? deriveSendAvailability(balances.snapshot) : [],
     [balances.snapshot],
@@ -38,6 +43,8 @@ export function PortfolioHomeExperience(
       {...props}
       assetBalances={presentation}
       sendAvailability={sendAvailability}
+      showSmallBalances={showSmallBalances}
+      onShowSmallBalancesChange={setShowSmallBalances}
       selectedRegionId={selectedRegion}
       onRegionChange={setSelectedRegion}
     />

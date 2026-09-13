@@ -2,6 +2,7 @@ import type { FiatCurrencyCode } from "@/config/regions";
 import {
   formatPresentationFiat,
   formatPresentationTokenAmount,
+  formatRelativeTime,
   presentationCurrencyName,
 } from "@/shared/formatting";
 import { exactDecimalToFraction } from "@/shared/balances/math";
@@ -28,21 +29,42 @@ export type BalancesPresentation = {
   totalStatus?: "complete" | "partial" | "unavailable";
   statusLabel?: string;
   rows: BalanceRowModel[];
+  hiddenRows: BalanceRowModel[];
+  hiddenCount: number;
   revalidating?: true;
+};
+
+export type PresentBalancesOptions = {
+  showSmallBalances: boolean;
+  nowMs?: number;
 };
 
 export const HOME_BALANCES_HUB_PREVIEW_COUNT = 4;
 
 export function previewBalanceRows(
   rows: readonly BalanceRowModel[],
+  hiddenRows: readonly BalanceRowModel[] = [],
   limit = HOME_BALANCES_HUB_PREVIEW_COUNT,
 ): readonly BalanceRowModel[] {
-  return rows.slice(0, limit);
+  if (hiddenRows.length === 0) return rows.slice(0, limit);
+  const hiddenKeys = new Set(hiddenRows.map((row) => row.key));
+  return rows.filter((row) => !hiddenKeys.has(row.key)).slice(0, limit);
 }
 
-export function presentBalances(state: BalancesState): BalancesPresentation {
+export function presentBalances(
+  state: BalancesState,
+  { showSmallBalances, nowMs = Date.now() }: PresentBalancesOptions = {
+    showSmallBalances: false,
+  },
+): BalancesPresentation {
   if (state.status === "loading") {
-    return { status: "loading", displayTotal: null, rows: [] };
+    return {
+      status: "loading",
+      displayTotal: null,
+      rows: [],
+      hiddenRows: [],
+      hiddenCount: 0,
+    };
   }
   if (state.status !== "ready") {
     return {
@@ -51,12 +73,15 @@ export function presentBalances(state: BalancesState): BalancesPresentation {
       totalStatus: "unavailable",
       statusLabel: "Balance unavailable",
       rows: [],
+      hiddenRows: [],
+      hiddenCount: 0,
     };
   }
 
   const total = selectTotal(state.snapshot);
   const noCurrency = total.status === "no-quote-currency";
   const unavailable = total.status === "unavailable";
+  const { visibleRows, hiddenRows } = presentBalanceRowPartitions(state.snapshot);
   return {
     status: "ready",
     displayTotal: total.value && total.currency
@@ -67,17 +92,29 @@ export function presentBalances(state: BalancesState): BalancesPresentation {
       : noCurrency || unavailable
         ? "unavailable"
         : "complete",
-    statusLabel: noCurrency
-      ? "Choose a country in Account to set how money is shown"
-      : unavailable
-        ? "Balance unavailable"
-        : undefined,
-    rows: presentBalanceRows(state.snapshot),
+    statusLabel: state.snapshot.stale === true
+      ? `Updated ${formatRelativeTime(state.snapshot.fetchedAt, nowMs)}`
+      : noCurrency
+        ? "Choose a country in Account to set how money is shown"
+        : unavailable
+          ? "Balance unavailable"
+          : undefined,
+    rows: showSmallBalances ? [...visibleRows, ...hiddenRows] : visibleRows,
+    hiddenRows,
+    hiddenCount: hiddenRows.length,
     ...(state.revalidating ? { revalidating: true as const } : {}),
   };
 }
 
 export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[] {
+  const { visibleRows, hiddenRows } = presentBalanceRowPartitions(snapshot);
+  return [...visibleRows, ...hiddenRows];
+}
+
+function presentBalanceRowPartitions(snapshot: BalancesSnapshot): {
+  visibleRows: BalanceRowModel[];
+  hiddenRows: BalanceRowModel[];
+} {
   const cashSelections = selectCash(snapshot);
   const selectedCashIds = new Set(
     cashSelections.flatMap((entry) => entry.kind === "holding" ? [entry.holding.id] : []),
@@ -98,6 +135,8 @@ export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[
     if (holding.value.status === "priced") {
       if (isAtLeastOneCent(holding.value.amount)) priced.push({ row, value: holding.value.amount });
       else dust.push(row);
+    } else if (holding.source === "wallet") {
+      dust.push(row);
     } else {
       unpriced.push(row);
     }
@@ -106,7 +145,10 @@ export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[
   priced.sort((left, right) => compareExactDecimals(right.value, left.value) || compareRows(left.row, right.row));
   unpriced.sort(compareRows);
   dust.sort(compareRows);
-  return [...cash, ...priced.map(({ row }) => row), ...unpriced, ...dust];
+  return {
+    visibleRows: [...cash, ...priced.map(({ row }) => row), ...unpriced],
+    hiddenRows: dust,
+  };
 }
 
 function presentCash(entry: CashSelection, snapshot: BalancesSnapshot): BalanceRowModel {
