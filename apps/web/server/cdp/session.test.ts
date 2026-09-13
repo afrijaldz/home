@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
-import { ACCOUNT_PROVIDER_HEADER } from "@/shared/account/session-types";
+import {
+  ACCOUNT_PROVIDER_HEADER,
+  type VerifiedAccountSession,
+} from "@/shared/account/session-types";
 import { HOME_SESSION_COOKIE, signedValue } from "@/server/auth/native-base-session";
 import {
   AuthUnavailableError,
@@ -229,6 +232,40 @@ describe("GET /api/session handler", () => {
     } finally {
       restoreEnvironment("NEXT_PUBLIC_CDP_PROJECT_ID", previousProjectId);
     }
+  });
+
+  test("issues render cookies only for Bearer-validated smart accounts", async () => {
+    const calls: VerifiedAccountSession[] = [];
+    const issueCookies = (session: VerifiedAccountSession) => {
+      calls.push(session);
+      return ["home-cdp-session=issued; Path=/"];
+    };
+    const bearerWithSmartAccount = makeHandler(async () => embeddedProfile(), undefined, {
+      issueCookies,
+    });
+    const bearerWithoutSmartAccount = makeHandler(async () => ({
+      ...embeddedProfile(),
+      evmSmartAccountObjects: [],
+    }), undefined, { issueCookies });
+    const native = makeHandler(async () => ({}), undefined, {
+      homeSessionSecret: SECRET,
+      issueCookies,
+    });
+
+    const bearerResponse = await bearerWithSmartAccount(
+      makeRequest("Bearer verified.token.value"),
+    );
+    expect(bearerResponse.headers.getSetCookie()).toEqual([
+      "home-cdp-session=issued; Path=/",
+    ]);
+    expect((await bearerWithoutSmartAccount(
+      makeRequest("Bearer verified.token.value"),
+    )).headers.getSetCookie()).toEqual([]);
+    expect((await native(
+      makeRequest(undefined, "base-account", nativeSessionCookie()),
+    )).headers.getSetCookie()).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.accountProvider).toBe("cdp-embedded");
   });
 
   test("rejects unknown account-provider selectors before provider access", async () => {

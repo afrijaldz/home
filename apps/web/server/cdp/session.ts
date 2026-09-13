@@ -143,6 +143,7 @@ export type SessionHandlerDependencies = {
   getValidator: () => Promise<AccessTokenValidator>;
   baseAccountEnabled?: boolean;
   homeSessionSecret?: string;
+  issueCookies?: (session: VerifiedAccountSession, request: Request) => string[];
 };
 
 const privateResponseHeaders = {
@@ -151,10 +152,13 @@ const privateResponseHeaders = {
   Vary: `Cookie, Authorization, ${ACCOUNT_PROVIDER_HEADER}`,
 } as const;
 
-function jsonResponse(body: unknown, status: number): Response {
+function jsonResponse(body: unknown, status: number, cookies: string[] = []): Response {
   return Response.json(body, {
     status,
-    headers: privateResponseHeaders,
+    headers: [
+      ...Object.entries(privateResponseHeaders),
+      ...cookies.map((value): [string, string] => ["Set-Cookie", value]),
+    ],
   });
 }
 
@@ -247,6 +251,7 @@ export function createSessionHandler({
   baseAccountEnabled = isHomeSessionConfigured(
     homeSessionSecret ?? process.env.HOME_SESSION_SECRET,
   ),
+  issueCookies,
 }: SessionHandlerDependencies) {
   return async function GET(request: Request): Promise<Response> {
     const accountProvider = readAccountProvider(request);
@@ -282,7 +287,11 @@ export function createSessionHandler({
       }
       const session = normalizeVerifiedEndUser(verifiedEndUser, selectedProvider);
 
-      return jsonResponse(session, 200);
+      return jsonResponse(
+        session,
+        200,
+        session.smartAccount ? issueCookies?.(session, request) ?? [] : [],
+      );
     } catch (error) {
       if (error instanceof InvalidAccessTokenError) {
         return unauthenticatedResponse();

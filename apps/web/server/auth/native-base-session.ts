@@ -6,6 +6,7 @@ import { base } from "viem/chains";
 import { createSiweMessage, parseSiweMessage } from "viem/siwe";
 import { BASE_CHAIN_ID, type VerifiedAccountSession } from "@/shared/account/session-types";
 import { resolveBaseRpcUrl } from "@/server/chain/rpc";
+import { HOME_CDP_LIVE_COOKIE, HOME_CDP_SESSION_COOKIE } from "@/server/auth/cdp-render-session";
 import {
   clearCookie,
   cookie,
@@ -324,6 +325,8 @@ export function createNativeBaseLogoutHandler() {
     return json({ signedOut: true }, 200, [
       clearCookie(HOME_CHALLENGE_COOKIE, request),
       clearCookie(HOME_SESSION_COOKIE, request),
+      clearCookie(HOME_CDP_SESSION_COOKIE, request),
+      clearCookie(HOME_CDP_LIVE_COOKIE, request),
     ]);
   };
 }

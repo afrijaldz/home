@@ -165,7 +165,7 @@ describe("native Base authentication handlers", () => {
     }
   });
 
-  test("logout requires same-origin POST and clears both authentication cookies", async () => {
+  test("logout requires same-origin POST and clears all authentication cookies", async () => {
     const logout = createNativeBaseLogoutHandler();
     expect((await logout(logoutRequest())).status).toBe(403);
     expect((await logout(logoutRequest({ Origin: "https://evil.example" }))).status).toBe(403);
@@ -176,7 +176,7 @@ describe("native Base authentication handlers", () => {
     }));
     expect(response.status).toBe(200);
     const cookies = response.headers.getSetCookie();
-    expect(cookies).toHaveLength(2);
+    expect(cookies).toHaveLength(4);
     expect(cookies.every((value) => value.includes("Max-Age=0"))).toBe(true);
   });
 
