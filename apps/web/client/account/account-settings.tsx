@@ -45,6 +45,8 @@ export function AccountSettings({
   preferenceMessage,
   isPreferenceReady,
   accountAddress,
+  showSmallBalances,
+  onShowSmallBalancesChange,
   onSignOut,
 }: {
   regionId: RegionId;
@@ -53,6 +55,8 @@ export function AccountSettings({
   preferenceMessage: string;
   isPreferenceReady: boolean;
   accountAddress: string | null;
+  showSmallBalances: boolean;
+  onShowSmallBalancesChange: (value: boolean) => void;
   onSignOut: () => void;
 }) {
   const region = presentationRegions[regionId];
@@ -85,6 +89,29 @@ export function AccountSettings({
                   describedBy="country-help preference-status"
                   variant="settings"
                 />
+              </ItemActions>
+            </Item>
+            <ItemSeparator className="my-0" />
+            <Item className="min-w-0 flex-nowrap items-center">
+              <ItemContent className="min-w-0 flex-1">
+                <ItemTitle>Show small balances</ItemTitle>
+              </ItemContent>
+              <ItemActions>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  role="switch"
+                  aria-checked={showSmallBalances}
+                  aria-label="Show small balances"
+                  className="relative h-7 w-12 rounded-full bg-muted p-0 transition-colors aria-checked:bg-primary"
+                  onClick={() => onShowSmallBalancesChange(!showSmallBalances)}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-1 top-1 size-5 rounded-full bg-background shadow-sm transition-transform aria-hidden:translate-x-0"
+                    style={{ transform: showSmallBalances ? "translateX(1.25rem)" : undefined }}
+                  />
+                </Button>
               </ItemActions>
             </Item>
           </CardContent>

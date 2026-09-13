@@ -12,7 +12,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { MoneyTicker } from "@/components/money-ticker";
 import type { FetchActivity } from "@/client/activity";
-import type { AssetMarkResolution } from "@/client/asset-mark/presentation";
 import { FundingActions } from "@/client/funding/funding-actions";
 import { SavingsTeaser } from "@/client/savings/savings-teaser";
 import { TransferActions } from "@/client/transfers";
@@ -51,7 +50,6 @@ function SectionHeader({
 
 export function HomePanel({
   assetBalances,
-  assetMarkResolution,
   activitySession,
   sendAvailability,
   fetchActivity,
@@ -66,7 +64,6 @@ export function HomePanel({
   regionId,
 }: {
   assetBalances?: HomeAssetBalancesPresentation;
-  assetMarkResolution?: AssetMarkResolution;
   activitySession: VerifiedAccountSession | null;
   sendAvailability: readonly TransferAssetAvailability[];
   fetchActivity: FetchActivity;
@@ -89,8 +86,7 @@ export function HomePanel({
       ? "Balance unavailable"
       : "Total balance";
   const balanceRows = assetBalances?.rows ?? [];
-  const balanceStatusLabel =
-    assetBalances?.totalStatus === "partial" ? undefined : assetBalances?.statusLabel;
+  const balanceStatusLabel = assetBalances?.statusLabel;
   const showBalanceStatus =
     assetBalances?.status !== "loading" && Boolean(balanceStatusLabel);
 
@@ -142,10 +138,9 @@ export function HomePanel({
           </CardHeader>
           <CardContent className="px-2">
             <HomeBalancesList
-              rows={previewBalanceRows(balanceRows)}
+              rows={previewBalanceRows(balanceRows, assetBalances?.hiddenRows)}
               isLoading={isLoading}
               isUnavailable={assetBalances?.status === "unavailable"}
-              assetMarkResolution={assetMarkResolution}
             />
           </CardContent>
         </Card>

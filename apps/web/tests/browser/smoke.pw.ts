@@ -8,6 +8,7 @@ import {
 } from "../../shared/savings/config";
 import {
   balancesSnapshot,
+  CBBTC_IMAGE_URL,
   RECOGNIZED_IMAGE_URL,
   rowAnatomySnapshot,
   scrollableBalancesSnapshot,
@@ -284,7 +285,7 @@ async function visibleBalanceRowLayout(page: Page) {
   }));
 }
 
-test("catalog token appears on Home and Balances with its image, but never enters Send availability", async ({ page }) => {
+test("holding icons and hidden dust stay consistent across Home, Balances, and Send", async ({ page }) => {
   const fixture = balancesSnapshot();
   parseBalancesSnapshot(fixture, {
     subject: "playwright-smoke-subject",
@@ -292,7 +293,7 @@ test("catalog token appears on Home and Balances with its image, but never enter
     chainId: 8453,
   }, "US");
   await page.addInitScript(() => localStorage.setItem("home.country.v1", "US"));
-  await page.route(RECOGNIZED_IMAGE_URL, (route) =>
+  await page.route("https://images.example.test/**", (route) =>
     route.fulfill({
       status: 200,
       contentType: "image/svg+xml",
@@ -310,6 +311,7 @@ test("catalog token appears on Home and Balances with its image, but never enter
   await expect(homeCatalogRow.getByText("1 RCG", { exact: true })).toBeVisible();
   await expect(homeCatalogRow.locator(`img[src="${RECOGNIZED_IMAGE_URL}"]`)).toBeVisible();
   await expect(homeCatalogRow.locator('[data-mark="image"]')).toBeVisible();
+  await expect(page.getByText("Dust Coin", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Balances" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
@@ -319,8 +321,22 @@ test("catalog token appears on Home and Balances with its image, but never enter
   await expect(balancesCatalogRow).toBeVisible();
   await expect(balancesCatalogRow.getByText("1 RCG", { exact: true })).toBeVisible();
   await expect(balancesCatalogRow.locator(`img[src="${RECOGNIZED_IMAGE_URL}"]`)).toBeVisible();
+  const balancesCbbtcRow = page.locator('[data-shell-panel]:not([hidden]) li', {
+    hasText: "Bitcoin",
+  });
+  await expect(balancesCbbtcRow.locator(`img[src="${CBBTC_IMAGE_URL}"]`)).toBeVisible();
+  await expect(balancesCbbtcRow.locator('[data-shimmer="mark"]')).toHaveCount(0);
+  await expect(page.getByText("1 small balance hidden", { exact: false })).toBeVisible();
+  await expect(page.getByText("Dust Coin", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await expect(page.getByText("Dust Coin", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hide small balances" })).toBeVisible();
 
   await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator(
+    '[data-shell-panel]:not([hidden]) [data-balance-list] li',
+    { hasText: "Dust Coin" },
+  )).toHaveCount(0);
   await page.getByRole("button", { name: "Send" }).click();
   const send = page.getByRole("dialog", { name: "Send" });
   await expect(send.getByText("Recognized Coin", { exact: true })).toHaveCount(0);

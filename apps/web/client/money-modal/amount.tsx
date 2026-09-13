@@ -188,6 +188,7 @@ export function MoneyAmountDisplay({
   onAmountChange,
   availableLabel,
   availableAmount,
+  availableSuffix,
   assetId,
   assetLabel,
   assetCurrency,
@@ -204,6 +205,7 @@ export function MoneyAmountDisplay({
   onAmountChange?: (value: string, source: MoneyAmountChangeSource) => void;
   availableLabel?: string;
   availableAmount?: string | null;
+  availableSuffix?: string;
   assetId?: string;
   assetLabel?: string;
   assetCurrency?: string | null;
@@ -269,7 +271,12 @@ export function MoneyAmountDisplay({
           }
         />
       ) : null}
-      {availableLine ? <div className="text-center text-sm text-muted-foreground"><MoneyTicker value={availableLine} /></div> : null}
+      {availableLine ? (
+        <div className="text-center text-sm text-muted-foreground">
+          <MoneyTicker value={availableLine} />
+          {availableSuffix ? ` · ${availableSuffix}` : null}
+        </div>
+      ) : null}
     </div>
   );
 }

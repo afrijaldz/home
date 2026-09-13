@@ -29,6 +29,7 @@ function AmountHarness({
   ],
   availableLabel = "$1,240.00 available",
   availableAmount,
+  availableSuffix,
 }: {
   chipSet?: "none" | "max" | "quick-local";
   pricing?: typeof usdUsdc;
@@ -39,6 +40,7 @@ function AmountHarness({
   assetOptions?: ReadonlyArray<{ id: string; label: string }>;
   availableLabel?: string;
   availableAmount?: string | null;
+  availableSuffix?: string;
 }) {
   const [amount, setAmount] = useState("");
   const [amountChangeSource, setAmountChangeSource] =
@@ -55,6 +57,7 @@ function AmountHarness({
         onAmountChange={changeAmount}
         availableLabel={availableLabel}
         availableAmount={availableAmount}
+        availableSuffix={availableSuffix}
         assetId={assetId}
         assetLabel={assetLabel}
         assetOptions={assetOptions}
@@ -112,6 +115,19 @@ describe("MoneyAmountDisplay", () => {
     expect((page().getByRole("button", { name: "$10" }) as HTMLButtonElement).disabled).toBe(true);
     expect((page().getByRole("button", { name: "$25" }) as HTMLButtonElement).disabled).toBe(true);
 
+    fireEvent.click(page().getByRole("button", { name: "Max" }));
+    expect(page().getByLabelText("Native amount").textContent).toBe("1240.00");
+  });
+
+  test("renders an available suffix without changing the exact Max amount", () => {
+    render(
+      <AmountHarness
+        availableAmount="1240.00"
+        availableSuffix="Updated 3 min ago"
+      />,
+    );
+
+    expect(page().getByText("Updated 3 min ago", { exact: false })).toBeTruthy();
     fireEvent.click(page().getByRole("button", { name: "Max" }));
     expect(page().getByLabelText("Native amount").textContent).toBe("1240.00");
   });

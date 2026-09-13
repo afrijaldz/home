@@ -49,6 +49,8 @@ const loadingAssetBalances: HomeAssetBalancesPresentation = {
   status: "loading",
   displayTotal: null,
   rows: [],
+  hiddenRows: [],
+  hiddenCount: 0,
 };
 
 type HomeShellProps = HomeExperienceProps & {
@@ -67,7 +69,8 @@ export function HomeShell({
   initialAccountSettingsOpen = false,
   assetBalances,
   sendAvailability = [],
-  assetMarkResolution,
+  showSmallBalances = false,
+  onShowSmallBalancesChange = () => {},
   landingVisual,
   routeMode = "landing",
   initialAddMoney = false,
@@ -478,7 +481,8 @@ export function HomeShell({
           signOut={signOut}
           paintedAssetBalances={paintedAssetBalances}
           sendAvailability={sendAvailability}
-          assetMarkResolution={assetMarkResolution}
+          showSmallBalances={showSmallBalances}
+          onShowSmallBalancesChange={onShowSmallBalancesChange}
           activitySession={activitySession}
           fetchActivity={account.fetchActivity}
           fetchOperations={account.fetchOperations}
