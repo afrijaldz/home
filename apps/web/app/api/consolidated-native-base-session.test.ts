@@ -16,7 +16,7 @@ const previousSecret = process.env.HOME_SESSION_SECRET;
 const previousProjectId = process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
 
 process.env.HOME_SESSION_SECRET = SECRET;
-delete process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
+process.env.NEXT_PUBLIC_CDP_PROJECT_ID = "project-with-native-session";
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(

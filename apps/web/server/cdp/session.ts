@@ -7,7 +7,10 @@ import {
   type AccountProviderRequest,
   type VerifiedAccountSession,
 } from "@/shared/account/session-types";
-import { readNativeBaseSession } from "@/server/auth/native-base-session";
+import {
+  isHomeSessionConfigured,
+  readNativeBaseSession,
+} from "@/server/auth/native-base-session";
 
 export { BASE_CHAIN_ID } from "@/shared/account/session-types";
 export type SessionPayload = VerifiedAccountSession;
@@ -69,33 +72,6 @@ function normalizeEmbeddedAddress(value: VerifiedEndUser): `0x${string}` | null 
   return smartAccounts[0] ?? null;
 }
 
-function normalizeSiweAddress(value: VerifiedEndUser): `0x${string}` {
-  if (!Array.isArray(value.authenticationMethods)) {
-    throw new InvalidVerifiedIdentityError();
-  }
-
-  const siweAddresses = new Set<`0x${string}`>();
-  for (const method of value.authenticationMethods) {
-    if (
-      method &&
-      typeof method === "object" &&
-      "type" in method &&
-      method.type === "siwe"
-    ) {
-      if (!("address" in method)) {
-        throw new InvalidVerifiedIdentityError();
-      }
-      siweAddresses.add(normalizeAddress(method.address));
-    }
-  }
-
-  if (siweAddresses.size !== 1) {
-    throw new InvalidVerifiedIdentityError();
-  }
-
-  return [...siweAddresses][0];
-}
-
 function authenticatedAccountProviders(value: unknown): Set<AccountProvider> {
   if (!value || typeof value !== "object") {
     throw new InvalidVerifiedIdentityError();
@@ -147,10 +123,7 @@ function normalizeVerifiedEndUser(
     throw new InvalidVerifiedIdentityError();
   }
 
-  const address =
-    accountProvider === "base-account"
-      ? normalizeSiweAddress(endUser)
-      : normalizeEmbeddedAddress(endUser);
+  const address = normalizeEmbeddedAddress(endUser);
 
   return {
     user: {
@@ -170,7 +143,6 @@ export type SessionHandlerDependencies = {
   getValidator: () => Promise<AccessTokenValidator>;
   baseAccountEnabled?: boolean;
   homeSessionSecret?: string;
-  nativeBaseAccountEnabled?: boolean;
 };
 
 const privateResponseHeaders = {
@@ -271,9 +243,10 @@ function readAccountProvider(request: Request): AccountProviderRequest | null {
 
 export function createSessionHandler({
   getValidator,
-  baseAccountEnabled = false,
   homeSessionSecret,
-  nativeBaseAccountEnabled = !process.env.NEXT_PUBLIC_CDP_PROJECT_ID?.trim(),
+  baseAccountEnabled = isHomeSessionConfigured(
+    homeSessionSecret ?? process.env.HOME_SESSION_SECRET,
+  ),
 }: SessionHandlerDependencies) {
   return async function GET(request: Request): Promise<Response> {
     const accountProvider = readAccountProvider(request);
@@ -283,7 +256,7 @@ export function createSessionHandler({
 
     const authorizationPresent = request.headers.has("Authorization");
     const accessToken = readBearerToken(request);
-    const nativeSession = nativeBaseAccountEnabled
+    const nativeSession = baseAccountEnabled
       ? readNativeBaseSession(request, homeSessionSecret)
       : { kind: "absent" as const };
     if (authorizationPresent && nativeSession.kind !== "absent") {
@@ -297,10 +270,6 @@ export function createSessionHandler({
       return jsonResponse(nativeSession.session, 200);
     }
     if (!accessToken) return unauthenticatedResponse();
-    if (accountProvider === "base-account" && !baseAccountEnabled) {
-      return baseAccountDisabledResponse();
-    }
-
     try {
       const validator = await getValidator();
       const verifiedEndUser = await validator.validateAccessToken(accessToken);
@@ -308,7 +277,7 @@ export function createSessionHandler({
         accountProvider === "restore"
           ? restoredAccountProvider(verifiedEndUser)
           : accountProvider;
-      if (selectedProvider === "base-account" && !baseAccountEnabled) {
+      if (selectedProvider === "base-account") {
         return baseAccountDisabledResponse();
       }
       const session = normalizeVerifiedEndUser(verifiedEndUser, selectedProvider);

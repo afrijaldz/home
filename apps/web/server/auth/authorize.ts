@@ -3,11 +3,11 @@ import "server-only";
 import {
   ACCOUNT_PROVIDER_HEADER,
   BASE_CHAIN_ID,
-  isBaseAccountEnabled,
   type AccountProvider,
   type VerifiedAccountSession,
 } from "@/shared/account/session-types";
 import { getCdpAccessTokenValidator } from "@/server/cdp/provider";
+import { isHomeSessionConfigured } from "@/server/auth/native-base-session";
 import { createSessionHandler } from "@/server/cdp/session";
 
 export type SessionAuthorizer = (
@@ -20,11 +20,8 @@ type SessionBoundary = (
 
 export const sessionHandler = createSessionHandler({
   getValidator: getCdpAccessTokenValidator,
-  baseAccountEnabled: isBaseAccountEnabled(
-    process.env.NEXT_PUBLIC_ENABLE_BASE_ACCOUNT,
-  ),
   homeSessionSecret: process.env.HOME_SESSION_SECRET,
-  nativeBaseAccountEnabled: !process.env.NEXT_PUBLIC_CDP_PROJECT_ID?.trim(),
+  baseAccountEnabled: isHomeSessionConfigured(process.env.HOME_SESSION_SECRET),
 });
 
 /**
