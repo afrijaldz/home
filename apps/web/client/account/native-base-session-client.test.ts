@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { jsonResponse } from "@/tests/helpers/http";
 import { ACCOUNT_PROVIDER_HEADER } from "@/shared/account/session-types";
 import {
+  clearNativeBaseSession,
   restoreNativeBaseSession,
   type NativeBaseFetch,
 } from "./native-base-session-client";
@@ -45,6 +46,26 @@ describe("native Base session restoration", () => {
       await expect(
         restoreNativeBaseSession(fetchFixture),
       ).rejects.toThrow("Native Base authentication failed.");
+    }
+  });
+});
+
+describe("native Base sign-out", () => {
+  test("is never pinned to the serving deployment", async () => {
+    const previous = process.env.NEXT_DEPLOYMENT_ID;
+    process.env.NEXT_DEPLOYMENT_ID = "dpl_stale";
+    try {
+      let captured: RequestInit | undefined;
+      const fetchFixture: NativeBaseFetch = async (_input, init) => {
+        captured = init;
+        return jsonResponse({ signedOut: true }, 200);
+      };
+      await clearNativeBaseSession(fetchFixture);
+      expect(new Headers(captured?.headers).has("x-deployment-id")).toBe(false);
+      expect(captured?.credentials).toBe("same-origin");
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_DEPLOYMENT_ID;
+      else process.env.NEXT_DEPLOYMENT_ID = previous;
     }
   });
 });
