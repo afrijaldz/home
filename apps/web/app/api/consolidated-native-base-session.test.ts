@@ -12,7 +12,6 @@ import {
 const SECRET = "native-base-route-test-secret-with-32-bytes";
 const ADDRESS = "0x1111111111111111111111111111111111111111";
 const ORIGIN = "https://home.example";
-const NOW = new Date("2026-09-13T12:00:00.000Z");
 const previousSecret = process.env.HOME_SESSION_SECRET;
 const previousProjectId = process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
 
@@ -83,7 +82,8 @@ describe("consolidated route authorization", () => {
 async function createSessionCookie(): Promise<string> {
   const dependencies = {
     sessionSecret: SECRET,
-    now: () => NOW,
+    // Routes validate expiry against the wall clock; mint relative to it.
+    now: () => new Date(),
     randomId: () => "a".repeat(48),
     verify: async () => true,
   };
