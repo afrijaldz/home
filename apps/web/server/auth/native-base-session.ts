@@ -127,16 +127,14 @@ export type NativeBaseSessionRead =
   | { kind: "invalid" }
   | { kind: "valid"; session: VerifiedAccountSession };
 
-export function readNativeBaseSession(
-  request: Request,
+export function readNativeBaseSessionToken(
+  token: string,
   secretValue: string | undefined = process.env.HOME_SESSION_SECRET,
   now: Date = new Date(),
-): NativeBaseSessionRead {
-  const found = readCookie(request, HOME_SESSION_COOKIE);
-  if (!found.present) return { kind: "absent" };
+): Exclude<NativeBaseSessionRead, { kind: "absent" }> {
   const secret = normalizeSecret(secretValue);
-  if (!secret || !found.value) return { kind: "invalid" };
-  const raw = readSignedValue(secret, found.value);
+  if (!secret) return { kind: "invalid" };
+  const raw = readSignedValue(secret, token);
   if (!raw) return { kind: "invalid" };
   try {
     const payload = JSON.parse(raw) as SessionTokenPayload;
@@ -154,6 +152,17 @@ export function readNativeBaseSession(
   } catch {
     return { kind: "invalid" };
   }
+}
+
+export function readNativeBaseSession(
+  request: Request,
+  secretValue: string | undefined = process.env.HOME_SESSION_SECRET,
+  now: Date = new Date(),
+): NativeBaseSessionRead {
+  const found = readCookie(request, HOME_SESSION_COOKIE);
+  if (!found.present) return { kind: "absent" };
+  if (!found.value) return { kind: "invalid" };
+  return readNativeBaseSessionToken(found.value, secretValue, now);
 }
 
 export type NativeBaseAuthDependencies = {
