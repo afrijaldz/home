@@ -23,10 +23,6 @@ export function composeSdkBoundaries({
   const nativeSignedIn = isInitialized && native.identity !== null;
   const cdpSignedIn = isInitialized && !nativeSignedIn && cdp.isSignedIn;
 
-  if (nativeSignedIn && cdp.isSignedIn) {
-    queueMicrotask(() => void cdpSignOut().catch(() => {}));
-  }
-
   return {
     authentication: nativeSignedIn ? "native-base" : "cdp",
     ...(isInitialized && native.initializationError && !cdp.isSignedIn
@@ -44,13 +40,10 @@ export function composeSdkBoundaries({
     signInWithEmail: cdp.signInWithEmail,
     verifyEmailOTP: async (flowId, otp) => {
       await cdp.verifyEmailOTP(flowId, otp);
-      await clearNative();
+      if (native.identity !== null) await clearNative();
     },
     signInWithSiwe: native.boundary.signInWithSiwe,
-    verifySiweSignature: async (flowId, signature) => {
-      await native.boundary.verifySiweSignature(flowId, signature);
-      queueMicrotask(() => void cdpSignOut().catch(() => {}));
-    },
+    verifySiweSignature: native.boundary.verifySiweSignature,
     getAccessToken: nativeSignedIn ? async () => null : cdp.getAccessToken,
     sendUserOperation: cdp.sendUserOperation,
     getUserOperation: cdp.getUserOperation,

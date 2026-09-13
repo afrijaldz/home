@@ -1,7 +1,7 @@
 "use client";
 
 import { CDPHooksProvider } from "@coinbase/cdp-hooks";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { AccountWalletSessionOwner } from "./cdp-session-lifecycle";
 import {
   CdpHooksErrorBoundary,
@@ -14,12 +14,21 @@ import NativeBaseAccountBridge, { useNativeBaseIdentity } from "./native-base-br
 function CompositeAccountBridge({ children }: { children: ReactNode }) {
   const cdp = useCdpSdkBoundary();
   const native = useNativeBaseIdentity();
+  const cdpSignOutInFlight = useRef(false);
   const sdk = useMemo(() => composeSdkBoundaries({
     cdp,
     native,
     clearNative: native.boundary.signOut,
     cdpSignOut: cdp.signOut,
   }), [cdp, native]);
+
+  useEffect(() => {
+    if (native.identity === null || !cdp.isSignedIn || cdpSignOutInFlight.current) return;
+    cdpSignOutInFlight.current = true;
+    void cdp.signOut()
+      .catch(() => {})
+      .finally(() => { cdpSignOutInFlight.current = false; });
+  }, [cdp, native.identity]);
 
   return (
     <AccountWalletSessionOwner sdk={sdk} baseAccountEnabled projectConfigured>

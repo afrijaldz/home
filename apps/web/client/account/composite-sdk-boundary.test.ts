@@ -100,7 +100,7 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
     },
   },
   {
-    name: "gives native identity fixed priority and signs CDP out in the background",
+    name: "gives native identity fixed priority without side effects",
     run: async () => {
       let cdpSignOuts = 0;
       const sdk = composeSdkBoundaries(input({
@@ -108,12 +108,20 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
         identity: nativeSession,
         cdpSignOut: async () => { cdpSignOuts += 1; },
       }));
-      expect(sdk.authentication).toBe("native-base");
-      expect(sdk.ownerKey).toBe("native-owner");
-      expect(sdk.provisionalSession).toEqual(nativeSession);
+      expect({
+        authentication: sdk.authentication,
+        isSignedIn: sdk.isSignedIn,
+        ownerKey: sdk.ownerKey,
+        provisionalSession: sdk.provisionalSession,
+      }).toEqual({
+        authentication: "native-base",
+        isSignedIn: true,
+        ownerKey: "native-owner",
+        provisionalSession: nativeSession,
+      });
       expect(await sdk.getAccessToken()).toBeNull();
       await Promise.resolve();
-      expect(cdpSignOuts).toBe(1);
+      expect(cdpSignOuts).toBe(0);
     },
   },
   {
@@ -142,6 +150,7 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
       const events: string[] = [];
       const sdk = composeSdkBoundaries(input({
         cdp: { verifyEmailOTP: async () => { events.push("verify"); await verification.promise; } },
+        identity: nativeSession,
         clearNative: async () => { events.push("clear-native"); },
       }));
       const result = sdk.verifyEmailOTP("flow", "123456");
@@ -153,21 +162,28 @@ const rows: Array<{ name: string; run: () => Promise<void> }> = [
     },
   },
   {
-    name: "signs CDP out only after native verification resolves",
+    name: "does not clear native after CDP verification when native is absent",
     run: async () => {
-      const verification = deferred();
       const events: string[] = [];
       const sdk = composeSdkBoundaries(input({
-        native: { verifySiweSignature: async () => { events.push("verify"); await verification.promise; } },
+        cdp: { verifyEmailOTP: async () => { events.push("verify"); } },
+        clearNative: async () => { events.push("clear-native"); },
+      }));
+      await sdk.verifyEmailOTP("flow", "123456");
+      expect(events).toEqual(["verify"]);
+    },
+  },
+  {
+    name: "native verification remains a pure delegated action",
+    run: async () => {
+      const events: string[] = [];
+      const sdk = composeSdkBoundaries(input({
+        native: { verifySiweSignature: async () => { events.push("verify"); } },
         cdpSignOut: async () => { events.push("sign-out-cdp"); },
       }));
-      const result = sdk.verifySiweSignature("flow", "0x1234");
+      await sdk.verifySiweSignature("flow", "0x1234");
       await Promise.resolve();
       expect(events).toEqual(["verify"]);
-      verification.resolve();
-      await result;
-      await Promise.resolve();
-      expect(events).toEqual(["verify", "sign-out-cdp"]);
     },
   },
   {

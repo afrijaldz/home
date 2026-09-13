@@ -97,7 +97,10 @@ export function useNativeBaseIdentity(): NativeBaseIdentity {
     },
   }), [identity, initializationError, isSettled, restore]);
 
-  return { identity, isSettled, initializationError, restore, boundary };
+  return useMemo(
+    () => ({ identity, isSettled, initializationError, restore, boundary }),
+    [boundary, identity, initializationError, isSettled, restore],
+  );
 }
 
 export default function NativeBaseAccountBridge({ children }: { children: ReactNode }) {
