@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Pool, type PoolClient } from "@neondatabase/serverless";
+import { Pool, type PoolClient } from "pg";
 
 export type SqlQueryResult<T = Record<string, unknown>> = {
   rows: T[];
@@ -30,8 +30,28 @@ export function isUniqueViolation(error: unknown): boolean {
 }
 
 type Queryable = {
-  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount?: number }>;
+  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount?: number | null }>;
 };
+
+type PoolClientLike = Queryable & Pick<PoolClient, "release">;
+
+type PoolLike = Queryable & {
+  connect(): Promise<PoolClientLike>;
+  end(): Promise<void>;
+  on(event: "error", listener: (error: Error) => void): unknown;
+};
+
+type PostgresPoolConfig = {
+  connectionString: string;
+  max: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+};
+
+type PostgresSqlExecutorOptions = Readonly<{
+  schema?: string;
+  poolFactory?: (config: PostgresPoolConfig) => PoolLike;
+}>;
 
 function wrapQueryable(
   queryable: Queryable,
@@ -62,21 +82,34 @@ export function getSqlExecutor(
   if (runtimeExecutor) return runtimeExecutor;
   const connectionString = env.DATABASE_URL?.trim();
   if (!connectionString) throw new Error("DATABASE_URL is required for PostgreSQL persistence");
-  runtimeExecutor = createNeonSqlExecutor(connectionString);
+  runtimeExecutor = createPostgresSqlExecutor(connectionString);
   return runtimeExecutor;
 }
 
-export function createNeonSqlExecutor(
+export function createPostgresSqlExecutor(
   connectionString: string,
-  options: Readonly<{ schema?: string }> = {},
+  options: PostgresSqlExecutorOptions = {},
 ): SqlExecutor {
-  let pool: Pool | undefined;
+  let pool: PoolLike | undefined;
   let disposed = false;
   const schemaName = options.schema === undefined ? null : options.schema;
   const schema = schemaName === null ? null : postgresIdentifier(schemaName);
   const getPool = () => {
     if (disposed) throw new Error("PostgreSQL executor is disposed");
-    pool ??= new Pool({ connectionString });
+    if (!pool) {
+      const poolConfig = {
+        connectionString,
+        max: 5,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 10_000,
+      };
+      pool = options.poolFactory?.(poolConfig) ?? new Pool(poolConfig);
+      pool.on("error", (error) => {
+        // Idle clients can be reset between serverless invocations. Log only
+        // the SQLSTATE so the process survives without leaking connection details.
+        console.warn("postgres idle client error", (error as { code?: string }).code ?? "unknown");
+      });
+    }
     return pool;
   };
 
@@ -85,7 +118,7 @@ export function createNeonSqlExecutor(
     signal?: AbortSignal,
   ): Promise<Result> => {
     throwIfSqlAborted(signal);
-    const client: PoolClient = await getPool().connect();
+    const client: PoolClientLike = await getPool().connect();
     const tx = wrapQueryable(client, () => {
       throw new Error("nested transactions are not supported");
     });

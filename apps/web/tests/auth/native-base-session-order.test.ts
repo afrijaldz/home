@@ -1,6 +1,7 @@
 import "@/client/account/dom-test-harness";
 
 import { describe, expect, test } from "bun:test";
+import { HOME_CDP_LIVE_COOKIE, HOME_CDP_SESSION_COOKIE } from "@/server/auth/cdp-render-session";
 import {
   HOME_CHALLENGE_COOKIE,
   HOME_SESSION_COOKIE,
@@ -72,7 +73,15 @@ describe("native Base authentication after shared DOM setup", () => {
       }),
     );
     const logoutCookies = logoutResponse.headers.getSetCookie();
-    expect(logoutCookies).toHaveLength(2);
+    expect(logoutCookies).toHaveLength(4);
+    for (const name of [
+      HOME_SESSION_COOKIE,
+      HOME_CHALLENGE_COOKIE,
+      HOME_CDP_SESSION_COOKIE,
+      HOME_CDP_LIVE_COOKIE,
+    ]) {
+      expect(logoutCookies.some((value) => value.startsWith(`${name}=`)), name).toBe(true);
+    }
     expect(logoutCookies.every((value) => value.includes("Max-Age=0"))).toBe(true);
   });
 });

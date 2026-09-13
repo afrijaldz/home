@@ -1,3 +1,4 @@
+import { createHash, createHmac } from "node:crypto";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { RegionId } from "../../config/regions";
 import { parseBalancesSnapshot } from "../../shared/balances/contract";
@@ -263,6 +264,44 @@ async function amountMetrics(page: Page) {
     };
   });
 }
+
+test("a valid Home session redirects the landing route before rendering", async ({ context }) => {
+  const address = "0x1111111111111111111111111111111111111111";
+  const key = "playwright-smoke-home-session-secret-32-bytes!!";
+  const issuedAt = new Date();
+  const subject = `base-${createHash("sha256").update(address).digest("hex").slice(0, 32)}`;
+  const payload = JSON.stringify({
+    version: 1,
+    session: {
+      user: { subject },
+      smartAccount: { address, chainId: 8453 },
+      accountProvider: "base-account",
+    },
+    issuedAt: issuedAt.toISOString(),
+    expiresAt: new Date(issuedAt.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  const encoded = Buffer.from(payload, "utf8").toString("base64url");
+  const input = `v1.${encoded}`;
+  const signature = createHmac("sha256", Buffer.from(key, "utf8"))
+    .update(input)
+    .digest("base64url");
+
+  await context.addCookies([{
+    name: "home-session",
+    value: `${input}.${signature}`,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  }]);
+
+  const redirected = await context.request.get("/", { maxRedirects: 0 });
+  expect(redirected.status()).toBe(307);
+  expect(redirected.headers().location).toBe("/dashboard");
+
+  const signIn = await context.request.get("/?account=signin", { maxRedirects: 0 });
+  expect(signIn.status()).toBe(200);
+});
 
 function expectTickerInsideAmount(metrics: NonNullable<Awaited<ReturnType<typeof amountMetrics>>>) {
   expect(metrics.tickerLeft).toBeGreaterThanOrEqual(metrics.containerLeft - 0.5);

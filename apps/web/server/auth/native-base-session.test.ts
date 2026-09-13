@@ -7,6 +7,8 @@ import {
   createNativeBaseNonceHandler,
   createNativeBaseVerifyHandler,
   readNativeBaseSession,
+  readNativeBaseSessionToken,
+  signedValue,
 } from "./native-base-session";
 
 const SECRET = "test-secret-that-is-at-least-thirty-two-bytes";
@@ -165,7 +167,7 @@ describe("native Base authentication handlers", () => {
     }
   });
 
-  test("logout requires same-origin POST and clears both authentication cookies", async () => {
+  test("logout requires same-origin POST and clears all authentication cookies", async () => {
     const logout = createNativeBaseLogoutHandler();
     expect((await logout(logoutRequest())).status).toBe(403);
     expect((await logout(logoutRequest({ Origin: "https://evil.example" }))).status).toBe(403);
@@ -176,7 +178,7 @@ describe("native Base authentication handlers", () => {
     }));
     expect(response.status).toBe(200);
     const cookies = response.headers.getSetCookie();
-    expect(cookies).toHaveLength(2);
+    expect(cookies).toHaveLength(4);
     expect(cookies.every((value) => value.includes("Max-Age=0"))).toBe(true);
   });
 
@@ -189,13 +191,37 @@ describe("native Base authentication handlers", () => {
       issued.cookie,
     ));
     const sessionCookie = cookieValue(response, HOME_SESSION_COOKIE);
-    expect(readNativeBaseSession(new Request(`${ORIGIN}/api/session`, {
-      headers: { Cookie: sessionCookie },
-    }), SECRET, START).kind).toBe("valid");
+    const session = await response.json();
+    const malformedExpiry = signedValue(Buffer.from(SECRET), JSON.stringify({
+      version: 1,
+      session,
+      issuedAt: START.toISOString(),
+      expiresAt: "not-a-date",
+    }));
+    const cases = [
+      {
+        name: "valid session",
+        read: () => readNativeBaseSession(new Request(`${ORIGIN}/api/session`, {
+          headers: { Cookie: sessionCookie },
+        }), SECRET, START),
+        expected: "valid",
+      },
+      {
+        name: "tampered session",
+        read: () => readNativeBaseSession(new Request(`${ORIGIN}/api/session`, {
+          headers: { Cookie: `${sessionCookie.slice(0, -1)}x` },
+        }), SECRET, START),
+        expected: "invalid",
+      },
+      {
+        name: "malformed expiry",
+        read: () => readNativeBaseSessionToken(malformedExpiry, SECRET, START),
+        expected: "invalid",
+      },
+    ] as const;
 
-    const tampered = `${sessionCookie.slice(0, -1)}x`;
-    expect(readNativeBaseSession(new Request(`${ORIGIN}/api/session`, {
-      headers: { Cookie: tampered },
-    }), SECRET, START)).toEqual({ kind: "invalid" });
+    for (const entry of cases) {
+      expect(entry.read().kind, entry.name).toBe(entry.expected);
+    }
   });
 });

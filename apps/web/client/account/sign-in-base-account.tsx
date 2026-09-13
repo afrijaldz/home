@@ -22,7 +22,7 @@ export function BaseAccountOnlySignIn({
   onSignIn: () => void;
 }) {
   return (
-    <div className="mt-6">
+    <div className="mt-4">
       <Button
         ref={buttonRef}
         className="h-11 w-full"

@@ -244,6 +244,45 @@ describe("Home shell auth and privacy", () => {
     expect(page().queryByRole("navigation", { name: "Main navigation" })).toBeNull();
   });
 
+  test("redirects a verified landing session to the dashboard", async () => {
+    render(
+      <HomeHarness
+        accountSdk={sdk({
+          isSignedIn: true,
+          ownerKey: OWNER,
+          provisionalSession: session(),
+        })}
+        routeMode="landing"
+      />,
+    );
+
+    await waitFor(() => expect(replaceCalls).toEqual(["/dashboard"]));
+  });
+
+  test("keeps a verified landing session on an explicit sign-in intent", async () => {
+    let sessionChecks = 0;
+    syncLocation("/?account=signin");
+    historyEntries = ["/?account=signin"];
+    render(
+      <HomeHarness
+        accountSdk={sdk({
+          isSignedIn: true,
+          ownerKey: OWNER,
+          provisionalSession: session(),
+        })}
+        sessionFetch={async () => {
+          sessionChecks += 1;
+          return Response.json(session());
+        }}
+        routeMode="landing"
+      />,
+    );
+
+    await waitFor(() => expect(sessionChecks).toBe(1));
+    await act(async () => { await Promise.resolve(); });
+    expect(replaceCalls).toEqual([]);
+  });
+
   test("hides the previous owner's balances immediately during an owner switch", async () => {
     const pendingSession = deferred<Response>();
     const view = render(
@@ -268,6 +307,29 @@ describe("Home shell auth and privacy", () => {
     await waitForVerifiedShell();
   });
 
+  test("navigates only after dashboard sign-out resolves", async () => {
+    const pending = deferred<void>();
+    render(
+      <HomeHarness
+        accountSdk={sdk({
+          isSignedIn: true,
+          ownerKey: OWNER,
+          signOut: () => pending.promise,
+        })}
+      />,
+    );
+
+    fireEvent.click(await waitForVerifiedShell());
+    fireEvent.click(page().getByRole("button", { name: "Sign out" }));
+    expect(replaceCalls).toEqual([]);
+
+    await act(async () => {
+      pending.resolve(undefined);
+      await pending.promise;
+    });
+    await waitFor(() => expect(replaceCalls).toEqual(["/"]));
+  });
+
   test("keeps private content hidden after failed sign-out and permits recovery", async () => {
     let signOutCalls = 0;
     render(
@@ -285,12 +347,14 @@ describe("Home shell auth and privacy", () => {
 
     fireEvent.click(await waitForVerifiedShell());
     fireEvent.click(page().getByRole("button", { name: "Sign out" }));
-    await waitFor(() => expect(replaceCalls).toEqual(["/"]));
+    await page().findByRole("button", { name: "Retry sign out" });
+    expect(replaceCalls).toEqual([]);
     expect(page().queryByText("$12.34")).toBeNull();
     expect(page().queryByRole("navigation", { name: "Main navigation" })).toBeNull();
 
-    fireEvent.click(await page().findByRole("button", { name: "Retry sign out" }));
+    fireEvent.click(page().getByRole("button", { name: "Retry sign out" }));
     await waitFor(() => expect(signOutCalls).toBe(2));
+    await waitFor(() => expect(replaceCalls).toEqual(["/"]));
   });
 
   test("recovers a failed session check without revealing balances early", async () => {

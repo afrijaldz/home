@@ -256,6 +256,56 @@ describe("owner generation fence", () => {
     }
   });
 
+  test("signs the SDK out when CDP session validation returns 401", async () => {
+    let verificationLost = false;
+    let signOutCalls = 0;
+    render(
+      <AccountWalletSessionOwner
+        sdk={sdk({
+          provisionalSession: session("cdp-embedded"),
+          signOut: async () => { signOutCalls += 1; },
+        })}
+        sessionFetch={async () => verificationLost
+          ? new Response(null, { status: 401 })
+          : Response.json(session("cdp-embedded"))}
+      >
+        <ClientProbe />
+      </AccountWalletSessionOwner>,
+    );
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+
+    verificationLost = true;
+    await act(async () => { await currentClient().retrySessionValidation(); });
+
+    await waitFor(() => expect(currentClient().status).toBe("signed-out"));
+    expect(currentClient().message).toBe("You are signed out.");
+    expect(signOutCalls).toBe(1);
+  });
+
+  test("clears the CDP render hint synchronously with private session state", async () => {
+    let finishSignOut!: () => void;
+    const signOutPending = new Promise<void>((resolve) => { finishSignOut = resolve; });
+    const activeSdk = sdk({
+      provisionalSession: session("cdp-embedded"),
+      signOut: () => signOutPending,
+    });
+    render(
+      <AccountWalletSessionOwner sdk={activeSdk} sessionFetch={async () => Response.json(session("cdp-embedded"))}>
+        <ClientProbe />
+      </AccountWalletSessionOwner>,
+    );
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+    document.cookie = "home-cdp-live=fixture; Path=/; SameSite=Lax";
+    expect(document.cookie).toContain("home-cdp-live=fixture");
+
+    let signOutPromise!: Promise<void>;
+    act(() => { signOutPromise = currentClient().signOut(); });
+    expect(document.cookie).not.toContain("home-cdp-live");
+
+    finishSignOut();
+    await act(async () => { await signOutPromise; });
+  });
+
   test("cancels post-action freshness before an owner switch can recreate old-owner queries", async () => {
     const queryClient = getHomeQueryClient();
     let activeSession = session("cdp-embedded");
@@ -334,6 +384,51 @@ describe("owner generation fence", () => {
       globalThis.setTimeout = nativeSetTimeout;
       globalThis.clearTimeout = nativeClearTimeout;
     }
+  });
+
+  test("allows verification to finish when it switches from another signed-in provider", async () => {
+    let activeSession = session("base-account");
+    const viewRef: { current?: ReturnType<typeof render> } = {};
+    const provider = new ProviderFixture();
+    const asProvider = provider as unknown as Parameters<typeof restoreWithBaseProvider>[0];
+    const sessionFetch = async () => Response.json(activeSession);
+    const owner = (ownerSdk: AccountWalletSdkBoundary) => (
+      <AccountWalletSessionOwner
+        sdk={ownerSdk}
+        sessionFetch={sessionFetch}
+        baseAccountEnabled
+        baseAccountRestorer={(onInvalidated) => restoreWithBaseProvider(asProvider, onInvalidated)}
+      >
+        <ClientProbe />
+      </AccountWalletSessionOwner>
+    );
+    const nextSdk = sdk({
+      authentication: "cdp",
+      ownerKey: OWNER_B,
+      provisionalSession: session("cdp-embedded", "subject-b", ADDRESS_B),
+    });
+    const initialSdk = sdk({
+      authentication: "native-base",
+      ownerKey: OWNER_A,
+      provisionalSession: activeSession,
+      getAccessToken: async () => null,
+      verifyEmailOTP: async () => {
+        activeSession = session("cdp-embedded", "subject-b", ADDRESS_B);
+        viewRef.current?.rerender(owner(nextSdk));
+      },
+    });
+    viewRef.current = render(owner(initialSdk));
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+
+    let flowId = "";
+    await act(async () => {
+      ({ flowId } = await currentClient().requestEmailCode("person@example.com"));
+    });
+    await act(async () => {
+      await expect(currentClient().verifyEmailCode(flowId, "123456")).resolves.toBeUndefined();
+    });
+    await waitFor(() => expect(currentClient().ownerKey).toBe(OWNER_B));
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
   });
 
   test("clears confirmed plans at the owner-generation boundary", async () => {
