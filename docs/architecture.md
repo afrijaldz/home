@@ -39,7 +39,7 @@ flowchart LR
   Seams --> CDP[CDP: embedded wallet, Token Balances, SQL, Onramp]
   Seams --> Base[Base RPC via CDP Node]
   Seams --> Providers[Funding providers · Morpho · Codex · Coinbase FX]
-  API --> Neon[(Neon: records + observations)]
+  API --> Postgres[(PostgreSQL via pg: records + observations; Neon works as regular Postgres)]
   CDP -- wallet.activity webhook --> API
 ```
 

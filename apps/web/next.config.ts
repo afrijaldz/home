@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@coinbase/cdp-sdk",
-    "@neondatabase/serverless",
+    "pg",
     "@vercel/otel",
   ],
   // Keep absolute development redirects intact instead of normalizing both
