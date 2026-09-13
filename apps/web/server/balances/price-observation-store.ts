@@ -35,28 +35,29 @@ export class PostgresPriceObservationStore implements PriceObservationStore {
 
   async putMany(observations: readonly PriceObservation[]): Promise<void> {
     if (observations.length === 0) return;
-    await this.sql.transaction(async (transaction) => {
-      for (const observation of observations) {
-        await transaction.query(
-          `INSERT INTO price_observations
-           (asset_key,unit_price_atoms,unit_price_scale,as_of,fetched_at)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (asset_key) DO UPDATE SET
-             unit_price_atoms=EXCLUDED.unit_price_atoms,
-             unit_price_scale=EXCLUDED.unit_price_scale,
-             as_of=EXCLUDED.as_of,
-             fetched_at=EXCLUDED.fetched_at
-           WHERE EXCLUDED.as_of > price_observations.as_of`,
-          [
-            observation.assetKey,
-            observation.unitPrice.atoms,
-            observation.unitPrice.scale,
-            observation.asOf,
-            observation.fetchedAt,
-          ],
-        );
-      }
+    const values = observations.flatMap((observation) => [
+      observation.assetKey,
+      observation.unitPrice.atoms,
+      observation.unitPrice.scale,
+      observation.asOf,
+      observation.fetchedAt,
+    ]);
+    const rows = observations.map((_, index) => {
+      const first = index * 5 + 1;
+      return `($${first},$${first + 1},$${first + 2},$${first + 3},$${first + 4})`;
     });
+    await this.sql.query(
+      `INSERT INTO price_observations
+       (asset_key,unit_price_atoms,unit_price_scale,as_of,fetched_at)
+       VALUES ${rows.join(",")}
+       ON CONFLICT (asset_key) DO UPDATE SET
+         unit_price_atoms=EXCLUDED.unit_price_atoms,
+         unit_price_scale=EXCLUDED.unit_price_scale,
+         as_of=EXCLUDED.as_of,
+         fetched_at=EXCLUDED.fetched_at
+       WHERE EXCLUDED.as_of > price_observations.as_of`,
+      values,
+    );
   }
 }
 
