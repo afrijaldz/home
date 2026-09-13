@@ -69,6 +69,7 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
     ?? getCoinbaseExchangeRates;
   const priceStore = dependencies.priceStore ?? getPriceObservationStore();
   const now = dependencies.now ?? (() => new Date());
+  const lastWrittenAsOf = new Map<string, number>();
 
   return async function priceBalances(
     read: BalancesRead,
@@ -117,13 +118,15 @@ export function createBalancesPricer(dependencies: Dependencies = {}) {
       }
     }
 
+    const currentTime = now();
     const prices = await persistAndRestorePrices(
       priceBatches.flat(),
       priceStore,
-      now(),
+      currentTime,
+      lastWrittenAsOf,
     );
     return read.holdings.map((holding) =>
-      priceHolding(holding, quoteCurrency, prices, rates),
+      priceHolding(holding, quoteCurrency, prices, rates, currentTime),
     );
   };
 }
@@ -135,6 +138,7 @@ function priceHolding(
   quoteCurrency: FiatCurrencyCode | null,
   prices: readonly PriceQuote[],
   rates: ExchangeRates | null,
+  currentTime: Date,
 ): Holding {
   const base: Omit<Holding, "value"> = {
     key: holding.key,
@@ -185,7 +189,13 @@ function priceHolding(
     };
   }
 
-  const valuation = valueFraction(holding, quoteCurrency, prices, rates);
+  const valuation = valueFraction(
+    holding,
+    quoteCurrency,
+    prices,
+    rates,
+    currentTime,
+  );
   const value: HoldingValue = valuation.fraction
     ? {
         status: "priced",
@@ -212,6 +222,7 @@ function valueFraction(
   currency: FiatCurrencyCode,
   prices: readonly PriceQuote[],
   rates: ExchangeRates | null,
+  currentTime: Date,
 ): {
   fraction: Fraction | null;
   reason:
@@ -228,7 +239,7 @@ function valueFraction(
     ? holding.underlying!.decimals
     : holding.decimals;
   if (amount?.status !== "ready") {
-    return failed("price-unavailable");
+    return failed("price-unavailable", currentTime);
   }
 
   const quantity = baseUnitsToFraction(amount.baseUnits, decimals);
@@ -236,20 +247,20 @@ function valueFraction(
     return {
       fraction: ZERO,
       reason: "price-unavailable",
-      asOf: new Date().toISOString(),
+      asOf: currentTime.toISOString(),
     };
   }
 
   const fx = findFx(rates, currency);
   if (!fx) {
-    return failed("fx-unavailable");
+    return failed("fx-unavailable", currentTime);
   }
   const fxFraction = exactDecimalToFraction(fx.quoteUnitsPerUsd!);
 
   if (holding.kind === "native") {
     const native = rates?.nativeEthQuote ?? null;
     if (native?.status !== "fresh" || !native.assetUnitsPerUsd) {
-      return failed("price-unavailable");
+      return failed("price-unavailable", currentTime);
     }
     return {
       fraction: multiplyFractions(
@@ -271,10 +282,10 @@ function valueFraction(
     (candidate) => candidate.assetKey === pricingKey,
   );
   if (price?.status === "stale") {
-    return failed("price-stale");
+    return failed("price-stale", currentTime);
   }
   if (price?.status !== "fresh" || !price.unitPrice) {
-    return failed("price-unavailable");
+    return failed("price-unavailable", currentTime);
   }
   if (
     (holding.source === "catalog" || holding.source === "wallet") &&
@@ -283,7 +294,7 @@ function valueFraction(
       !meetsGate(holding.volume24Usd, VOLUME_GATE)
     )
   ) {
-    return failed("below-market-gate");
+    return failed("below-market-gate", currentTime);
   }
 
   return {
@@ -381,20 +392,35 @@ async function persistAndRestorePrices(
   prices: readonly PriceQuote[],
   store: PriceObservationStore,
   currentTime: Date,
+  lastWrittenAsOf: Map<string, number>,
 ): Promise<PriceQuote[]> {
-  const observations = prices.flatMap((price): PriceObservation[] =>
-    price.status === "fresh" && price.unitPrice && price.source.asOf
-      ? [{
-          assetKey: price.assetKey,
-          unitPrice: price.unitPrice,
-          asOf: price.source.asOf,
-          fetchedAt: price.source.fetchedAt,
-        }]
-      : []);
-  try {
-    await store.putMany(observations);
-  } catch {
-    // Persistence is a best-effort cross-instance fallback, never a read failure.
+  const byKey = new Map<string, { observation: PriceObservation; asOfMs: number }>();
+  for (const price of prices) {
+    if (price.status !== "fresh" || !price.unitPrice || !price.source.asOf) continue;
+    const asOfMs = Date.parse(price.source.asOf);
+    if (!Number.isFinite(asOfMs) || asOfMs <= (lastWrittenAsOf.get(price.assetKey) ?? Number.NEGATIVE_INFINITY)) continue;
+    const existing = byKey.get(price.assetKey);
+    if (existing && existing.asOfMs >= asOfMs) continue;
+    byKey.set(price.assetKey, {
+      asOfMs,
+      observation: {
+        assetKey: price.assetKey,
+        unitPrice: price.unitPrice,
+        asOf: price.source.asOf,
+        fetchedAt: price.source.fetchedAt,
+      },
+    });
+  }
+  const pending = [...byKey.values()];
+  if (pending.length > 0) {
+    try {
+      await store.putMany(pending.map(({ observation }) => observation));
+      for (const { observation, asOfMs } of pending) {
+        lastWrittenAsOf.set(observation.assetKey, asOfMs);
+      }
+    } catch {
+      // Persistence is a best-effort cross-instance fallback, never a read failure.
+    }
   }
 
   const fallbackKeys = prices.flatMap((price) =>
@@ -508,11 +534,12 @@ function failed(
     | "price-stale"
     | "fx-unavailable"
     | "below-market-gate",
+  currentTime: Date,
 ) {
   return {
     fraction: null,
     reason,
-    asOf: new Date().toISOString(),
+    asOf: currentTime.toISOString(),
   } as const;
 }
 

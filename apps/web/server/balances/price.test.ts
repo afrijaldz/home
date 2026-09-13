@@ -9,6 +9,7 @@ import {
 } from "./price";
 import type { BalancesRead, ReadHolding } from "./types";
 import { MemoryPriceObservationStore } from "./memory-price-observation-store";
+import type { PriceObservation, PriceObservationStore } from "./price-observation-store";
 
 const source = {
   provider: "Codex" as const,
@@ -424,6 +425,47 @@ describe("balances pricing", () => {
         reason: "price-unavailable",
       });
     }
+  });
+
+  test("dedupes observations by asset key using the newest source time", async () => {
+    const writes: PriceObservation[][] = [];
+    const priceStore: PriceObservationStore = {
+      getMany: async () => [],
+      putMany: async (observations) => { writes.push([...observations]); },
+    };
+    const newer = "2026-09-13T11:59:30.000Z";
+    const price = createTestPricer({
+      priceStore,
+      readPrices: async (inputs) => [
+        { ...quote(inputs[0]!.assetKey, "fresh"), source: { ...source, asOf: source.asOf } },
+        { ...quote(inputs[0]!.assetKey, "fresh"), source: { ...source, asOf: newer } },
+      ],
+      readExchangeRates: async () => rates(),
+    });
+
+    await price({ ...read, holdings: [usdc] }, "US");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual([expect.objectContaining({
+      assetKey: usdc.key,
+      asOf: newer,
+    })]);
+  });
+
+  test("skips persistence when source times have not advanced", async () => {
+    const writes: PriceObservation[][] = [];
+    const priceStore: PriceObservationStore = {
+      getMany: async () => [],
+      putMany: async (observations) => { writes.push([...observations]); },
+    };
+    const price = createTestPricer({
+      priceStore,
+      readPrices: async (inputs) => inputs.map((input) => quote(input.assetKey, "fresh")),
+      readExchangeRates: async () => rates(),
+    });
+
+    await price({ ...read, holdings: [usdc] }, "US");
+    await price({ ...read, holdings: [usdc] }, "US");
+    expect(writes).toHaveLength(1);
   });
 
   test("falls back to a stored quote when a Codex batch fails", async () => {

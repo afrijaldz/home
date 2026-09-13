@@ -290,6 +290,48 @@ describe("balance observations", () => {
     expect(snapshot.fetchedAt).toBe("2026-09-13T12:00:30.000Z");
   });
 
+  test("serves the winning row when the observation loses its conditional write", async () => {
+    const memory = new MemoryBalanceSnapshotStore();
+    await memory.putObservation(observation({
+      blockNumber: "12",
+      blockHash: `0x${"12".padStart(64, "0")}`,
+      blockTimestamp: "12",
+      observedAt: "2026-09-13T12:00:31.000Z",
+    }));
+    const winner = await memory.get(8453, owner);
+    let reads = 0;
+    const fixture = setup({
+      store: Object.assign(memory, {
+        get: async () => {
+          reads += 1;
+          return reads === 1 ? null : winner;
+        },
+        putObservation: async () => false,
+      }),
+    });
+
+    const snapshot = await fixture.service(owner, "US");
+    expect(snapshot.fetchedAt).toBe("2026-09-13T12:00:31.000Z");
+    expect(snapshot.block.number).toBe("12");
+  });
+
+  test("an unavailable enumeration resume preserves the stored cursor", async () => {
+    const fixture = setup({
+      enumerate: async () => ({
+        status: "unavailable",
+        rows: [],
+        nextCursor: null,
+        pagesRead: 0,
+        durationMs: 1,
+      }),
+    });
+    await fixture.store.putObservation(observation({ enumerationCursor: "page-two" }));
+
+    const snapshot = await fixture.service(owner, "US");
+    expect(snapshot.holdings.map(({ id }) => id)).toContain(catalog.id);
+    expect((await fixture.store.get(8453, owner))?.enumerationCursor).toBe("page-two");
+  });
+
   test("failed initial observation rejects so the route can return 502", async () => {
     const fixture = setup({
       registryRead: async () => { throw new Error("rpc unavailable"); },
