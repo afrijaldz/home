@@ -147,6 +147,7 @@ export type AccountWalletSdkBoundary = {
 
 const unconfiguredClient = createBlockedAccountWalletClient("unconfigured");
 const LazyCdpSdkProvider = lazy(() => import("./cdp-sdk-provider"));
+const LazyCompositeAccountProvider = lazy(() => import("./composite-account-provider"));
 const LazyNativeBaseAccountBridge = lazy(() => import("./native-base-bridge"));
 const LazySmokeFixtureAccountProvider = lazy(() =>
   import("./smoke-fixture-provider").then((module) => ({
@@ -275,16 +276,82 @@ function LazyConfiguredAccountProvider({
   );
 }
 
+function LazyCompositeAccountProviderBridge({
+  projectId,
+  children,
+}: {
+  projectId: string;
+  children: ReactNode;
+}) {
+  const [active, setActive] = useState(false);
+  const activeClientRef = useRef<AccountWalletClient | null>(null);
+  const readyResolversRef = useRef<Array<(client: AccountWalletClient) => void>>([]);
+
+  const activate = useMemo(() => () => {
+    if (activeClientRef.current) return Promise.resolve(activeClientRef.current);
+    setActive(true);
+    return new Promise<AccountWalletClient>((resolve) => {
+      readyResolversRef.current.push(resolve);
+    });
+  }, []);
+
+  useEffect(() => scheduleSdkActivation(() => setActive(true), {
+    hasHint: hasAccountProviderHint(),
+    requestIdle: typeof window.requestIdleCallback === "function"
+      ? (callback) => {
+          const id = window.requestIdleCallback(callback, { timeout: 1_500 });
+          return () => window.cancelIdleCallback?.(id);
+        }
+      : null,
+  }), []);
+
+  const onClient = useMemo(() => (client: AccountWalletClient) => {
+    activeClientRef.current = client;
+    for (const resolve of readyResolversRef.current.splice(0)) resolve(client);
+  }, []);
+
+  const bootstrapClient = useMemo<AccountWalletClient>(() => ({
+    ...createBlockedAccountWalletClient("provider-unavailable"),
+    projectConfigured: true,
+    signInAvailability: "ready",
+    baseAccountEnabled: true,
+    isInitialized: false,
+    status: "restoring",
+    message: null,
+    requestEmailCode: async (email) => (await activate()).requestEmailCode(email),
+    verifyEmailCode: async (flowId, otp) => (await activate()).verifyEmailCode(flowId, otp),
+    signInWithBaseAccount: async (onPhase) => (await activate()).signInWithBaseAccount(onPhase),
+    retrySessionValidation: async () => {
+      const current = activeClientRef.current;
+      if (current) await current.retrySessionValidation();
+      else await activate();
+    },
+  }), [activate]);
+
+  if (!active) {
+    return <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>;
+  }
+
+  return (
+    <Suspense fallback={(
+      <AccountWalletClientProvider client={bootstrapClient}>{children}</AccountWalletClientProvider>
+    )}>
+      <LazyCompositeAccountProvider projectId={projectId}>
+        <AccountClientCapture onClient={onClient} />
+        {children}
+      </LazyCompositeAccountProvider>
+    </Suspense>
+  );
+}
+
 export function CdpAccountProvider({
   projectId,
   baseAccountEnabled = false,
-  nativeBaseAccountEnabled = false,
   smokeFixture = false,
   children,
 }: {
   projectId: string | null;
   baseAccountEnabled?: boolean;
-  nativeBaseAccountEnabled?: boolean;
   smokeFixture?: boolean;
   children: ReactNode;
 }) {
@@ -297,14 +364,21 @@ export function CdpAccountProvider({
       </Suspense>
     );
   }
+  if (projectId && baseAccountEnabled) {
+    return (
+      <LazyCompositeAccountProviderBridge projectId={projectId}>
+        {children}
+      </LazyCompositeAccountProviderBridge>
+    );
+  }
   if (projectId) {
     return (
-      <LazyConfiguredAccountProvider projectId={projectId} baseAccountEnabled={baseAccountEnabled}>
+      <LazyConfiguredAccountProvider projectId={projectId} baseAccountEnabled={false}>
         {children}
       </LazyConfiguredAccountProvider>
     );
   }
-  if (nativeBaseAccountEnabled) {
+  if (baseAccountEnabled) {
     return (
       <Suspense fallback={(
         <AccountWalletClientProvider client={unconfiguredClient}>{children}</AccountWalletClientProvider>

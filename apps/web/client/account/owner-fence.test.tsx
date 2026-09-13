@@ -336,6 +336,51 @@ describe("owner generation fence", () => {
     }
   });
 
+  test("allows verification to finish when it switches from another signed-in provider", async () => {
+    let activeSession = session("base-account");
+    const viewRef: { current?: ReturnType<typeof render> } = {};
+    const provider = new ProviderFixture();
+    const asProvider = provider as unknown as Parameters<typeof restoreWithBaseProvider>[0];
+    const sessionFetch = async () => Response.json(activeSession);
+    const owner = (ownerSdk: AccountWalletSdkBoundary) => (
+      <AccountWalletSessionOwner
+        sdk={ownerSdk}
+        sessionFetch={sessionFetch}
+        baseAccountEnabled
+        baseAccountRestorer={(onInvalidated) => restoreWithBaseProvider(asProvider, onInvalidated)}
+      >
+        <ClientProbe />
+      </AccountWalletSessionOwner>
+    );
+    const nextSdk = sdk({
+      authentication: "cdp",
+      ownerKey: OWNER_B,
+      provisionalSession: session("cdp-embedded", "subject-b", ADDRESS_B),
+    });
+    const initialSdk = sdk({
+      authentication: "native-base",
+      ownerKey: OWNER_A,
+      provisionalSession: activeSession,
+      getAccessToken: async () => null,
+      verifyEmailOTP: async () => {
+        activeSession = session("cdp-embedded", "subject-b", ADDRESS_B);
+        viewRef.current?.rerender(owner(nextSdk));
+      },
+    });
+    viewRef.current = render(owner(initialSdk));
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+
+    let flowId = "";
+    await act(async () => {
+      ({ flowId } = await currentClient().requestEmailCode("person@example.com"));
+    });
+    await act(async () => {
+      await expect(currentClient().verifyEmailCode(flowId, "123456")).resolves.toBeUndefined();
+    });
+    await waitFor(() => expect(currentClient().ownerKey).toBe(OWNER_B));
+    await waitFor(() => expect(currentClient().status).toBe("verified"));
+  });
+
   test("clears confirmed plans at the owner-generation boundary", async () => {
     let activeSession = session("cdp-embedded");
     let confirmPosts = 0;
