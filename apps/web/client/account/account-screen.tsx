@@ -280,13 +280,13 @@ export function AccountSignInSheet({
             <X aria-hidden="true" />
           </Button>
         </DrawerHeader>
-        <MoneyModalBody className="pt-4">
+        <MoneyModalBody>
           {signInBlocked ? (
             <SignInBlockedPanel reason={signInAvailability === "provider-unavailable" ? "provider-unavailable" : "unconfigured"} />
           ) : (
             <>
-              {message ? <StatusMessage className="mt-6">{message}</StatusMessage> : null}
-              {authError ? <StatusMessage className="mt-6" tone="error" role="alert">{authError}</StatusMessage> : null}
+              {message ? <StatusMessage className="mt-4">{message}</StatusMessage> : null}
+              {authError ? <StatusMessage className="mt-4" tone="error" role="alert">{authError}</StatusMessage> : null}
               <SignInStatus
                 phase={isProviderHandoff ? null : activeBaseAccountPhase}
                 cleaningUp={isCleaningUp}
