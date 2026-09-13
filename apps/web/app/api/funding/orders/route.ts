@@ -13,7 +13,7 @@ export async function POST(request: Request): Promise<Response> {
   if (request.headers.get("content-type")?.split(";", 1)[0] !== "application/json") return fundingError("INVALID_ORDER_REQUEST", "A valid quote token is required.", 400);
   let body: unknown;
   try { body = await request.json(); } catch { return fundingError("INVALID_ORDER_REQUEST", "A valid quote token is required.", 400); }
-  try { return fundingJson({ order: await getFundingCore().createOrder(authorized.session, body, new URL(request.url).origin) }, 201); }
+  try { return fundingJson({ order: await getFundingCore().createOrder(authorized.session, body, new URL(request.url).origin, request.headers) }, 201); }
   catch (error) {
     if (error instanceof FundingCoreError) return fundingError(error.code, "The funding order could not be created.", error.status);
     emitServerEvent("funding-order", {

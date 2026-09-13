@@ -32,8 +32,9 @@ export class FundingCore {
   }
 
   async listProviders(region: string, session: VerifiedAccountSession) {
+    const sandbox = this.sandbox();
     const listed = this.deps.providers.flatMap((provider) => provider.manifest.bindings.flatMap((binding) => {
-      if (binding.region !== region || !binding.env.every((name) => Boolean(this.env[name]?.trim()))) return [];
+      if (binding.region !== region || (sandbox && provider.manifest.sandbox !== true) || !binding.env.every((name) => Boolean(this.env[name]?.trim()))) return [];
       const asset = getFundingAsset(binding.assetId);
       if (!asset) return [];
       return [{ provider, binding, asset }];
@@ -68,13 +69,14 @@ export class FundingCore {
     const provider = parsed ? this.provider(parsed.providerId) : null;
     const binding = provider?.manifest.bindings.find((candidate) => candidate.region === parsed?.region && candidate.paymentMethods.some((method) => method.id === parsed.paymentMethod));
     const asset = binding ? getFundingAsset(binding.assetId) : null;
-    if (!parsed || !provider || !binding || !asset || !session.smartAccount || !binding.env.every((name) => Boolean(this.env[name]?.trim()))) {
+    const sandbox = this.sandbox();
+    if (!parsed || !provider || !binding || !asset || !session.smartAccount || (sandbox && provider.manifest.sandbox !== true) || !binding.env.every((name) => Boolean(this.env[name]?.trim()))) {
       throw new FundingCoreError("INVALID_QUOTE_REQUEST", 400);
     }
     if (parsed.kycFields && !validKycFields(parsed.kycFields, provider.manifest.kyc?.fields ?? [])) {
       throw new FundingCoreError("INVALID_KYC_FIELDS", 400);
     }
-    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: parsed.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation });
+    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: parsed.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation, sandbox });
     const owner = ownerFor(session);
     let customerRef = await this.deps.store.findCustomerRef(owner, provider.manifest.id, binding.region);
     if (provider.manifest.kyc && !customerRef) {
@@ -95,16 +97,21 @@ export class FundingCore {
       subject: session.user.subject, accountProvider: session.accountProvider,
       providerId: provider.manifest.id, region: binding.region, paymentMethod: parsed.paymentMethod,
       destination: session.smartAccount.address, assetId: asset.id, fiatAmount: parsed.fiatAmount,
-      quote, customerRef,
+      quote, customerRef, sandbox,
     } as const;
-    return { quote, quoteToken: signFundingQuote(claims, quoteSecret) };
+    return { quote, quoteToken: signFundingQuote(claims, quoteSecret), sandbox };
   }
 
-  async createOrder(session: VerifiedAccountSession, body: unknown, returnOrigin: string) {
+  async createOrder(
+    session: VerifiedAccountSession,
+    body: unknown,
+    returnOrigin: string,
+    headers?: Headers,
+  ) {
     if (!record(body) || Object.keys(body).length !== 1 || typeof body.quoteToken !== "string" || !session.smartAccount) throw new FundingCoreError("INVALID_ORDER_REQUEST", 400);
     const authenticated = authenticateFundingQuote(body.quoteToken, this.quoteSecret());
     const claims = authenticated?.claims;
-    if (!authenticated || !claims || claims.subject !== session.user.subject || claims.accountProvider !== session.accountProvider || claims.destination !== session.smartAccount.address) throw new FundingCoreError("INVALID_QUOTE_TOKEN", 400);
+    if (!authenticated || !claims || claims.subject !== session.user.subject || claims.accountProvider !== session.accountProvider || claims.destination !== session.smartAccount.address || claims.sandbox !== this.sandbox()) throw new FundingCoreError("INVALID_QUOTE_TOKEN", 400);
     const provider = this.provider(claims.providerId);
     const binding = provider?.manifest.bindings.find((candidate) => candidate.region === claims.region && candidate.assetId === claims.assetId && candidate.paymentMethods.some((method) => method.id === claims.paymentMethod));
     if (!provider || !binding || !getFundingAsset(claims.assetId)) throw new FundingCoreError("INVALID_QUOTE_TOKEN", 400);
@@ -124,11 +131,11 @@ export class FundingCore {
       region: claims.region, assetId: claims.assetId, paymentMethod: claims.paymentMethod,
       fiatAmount: claims.fiatAmount, intentDigest,
       quote: claims.quote, quoteToken: authenticated.canonicalToken, customerRef: claims.customerRef,
-      creationBlock: await this.deps.currentBaseBlock(), createdAt: timestamp,
+      sandbox: claims.sandbox, creationBlock: await this.deps.currentBaseBlock(), createdAt: timestamp,
     });
     if (!reserved.created) return publicOrder(reserved.order);
-    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: claims.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation });
-    const result = await provider.createOrder({ homeOrderId: id, destination: session.smartAccount.address, fiatAmount: claims.fiatAmount, quote: claims.quote, customerRef: claims.customerRef ?? undefined, returnUrl: `${returnOrigin}/fund?return=funding` }, ctx);
+    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: claims.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation, sandbox: claims.sandbox });
+    const result = await provider.createOrder({ homeOrderId: id, destination: session.smartAccount.address, fiatAmount: claims.fiatAmount, quote: claims.quote, customerRef: claims.customerRef ?? undefined, clientIp: clientIpFromHeaders(headers), returnUrl: `${returnOrigin}/fund?return=funding` }, ctx);
     if (result.outcome === "ambiguous") return publicOrder(await this.deps.store.markDispatchAmbiguous(id, reserved.order.version, this.now().toISOString()));
     if (result.outcome === "rejected") {
       const rejected = await this.deps.store.applyObservation(id, { state: "failed", providerStatus: result.message, expectedVersion: reserved.order.version, updatedAt: this.now().toISOString() });
@@ -169,7 +176,7 @@ export class FundingCore {
     for (const binding of provider.manifest.bindings) {
       if (!binding.env.every((name) => Boolean(this.env[name]?.trim()))) continue;
       for (const method of binding.paymentMethods) {
-        const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: method.id, env: this.env, fetchImplementation: this.deps.fetchImplementation });
+        const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: method.id, env: this.env, fetchImplementation: this.deps.fetchImplementation, sandbox: this.sandbox() });
         const verified = provider.verifyWebhook(raw, headers, ctx);
         if (verified) { providerOrderId = verified.providerOrderId; break; }
       }
@@ -196,7 +203,7 @@ export class FundingCore {
     if (!provider || !binding) return order;
     const asset = getFundingAsset(order.assetId);
     if (!asset) return order;
-    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: order.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation });
+    const ctx = createProviderContext({ manifest: provider.manifest, region: binding.region, paymentMethodId: order.paymentMethod, env: this.env, fetchImplementation: this.deps.fetchImplementation, sandbox: order.sandbox });
     let observation: Observation;
     try {
       observation = await provider.getOrder({
@@ -224,7 +231,7 @@ export class FundingCore {
     // A concurrent or terminal transition won the compare-and-swap. This stale
     // observation must not claim a receipt or overwrite the winning state.
     if (!updated) return await this.deps.store.getOwned(order.id, order.owner) ?? order;
-    if (observation.transactionHash) {
+    if (observation.transactionHash && !order.sandbox) {
       const evidence = await this.deps.verifyReceipt(updated, observation.transactionHash);
       if (evidence) updated = await this.deps.store.claimReceipt(order.id, { ...evidence, expectedVersion: updated.version, updatedAt: this.now().toISOString() }) ?? updated;
     }
@@ -233,12 +240,13 @@ export class FundingCore {
 
   private provider(id: string) { return this.deps.providers.find((provider) => provider.manifest.id === id); }
   private quoteSecret() { return this.env.FUNDING_QUOTE_SECRET?.trim() ?? ""; }
+  private sandbox() { return this.env.FUNDING_SANDBOX === "1"; }
 }
 
 export class FundingCoreError extends Error { constructor(readonly code: string, readonly status: number) { super(code); } }
 
 export function publicOrder(order: FundingOrder) {
-  return { id: order.id, providerId: order.providerId, region: order.region, assetId: order.assetId, paymentMethod: order.paymentMethod, fiatAmount: order.fiatAmount, quote: order.quote, quoteToken: order.quoteToken, state: order.state, expectedTokenAmountAtomic: order.expectedTokenAmountAtomic, fees: order.fees, expiresAt: order.expiresAt, instructions: order.instructions, providerStatus: order.providerStatus, transactionHash: order.transactionHash, createdAt: order.createdAt, updatedAt: order.updatedAt };
+  return { id: order.id, providerId: order.providerId, region: order.region, assetId: order.assetId, paymentMethod: order.paymentMethod, fiatAmount: order.fiatAmount, quote: order.quote, quoteToken: order.quoteToken, sandbox: order.sandbox, state: order.state, expectedTokenAmountAtomic: order.expectedTokenAmountAtomic, fees: order.fees, expiresAt: order.expiresAt, instructions: order.instructions, providerStatus: order.providerStatus, transactionHash: order.transactionHash, createdAt: order.createdAt, updatedAt: order.updatedAt };
 }
 function ownerFor(session: VerifiedAccountSession): FundingOrderOwner { return { subject: session.user.subject, accountProvider: session.accountProvider }; }
 function localOneToOneQuote(fiatAmount: string, decimals: number, now: Date): Quote {
@@ -287,5 +295,10 @@ function validKycFields(fields: Record<string, string>, definitions: ReadonlyArr
   const expected = definitions.map((field) => field.name).sort();
   const supplied = Object.keys(fields).sort();
   return expected.length === supplied.length && expected.every((name, index) => name === supplied[index] && fields[name].trim().length > 0);
+}
+function clientIpFromHeaders(headers: Headers | undefined): string | undefined {
+  const forwarded = headers?.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (forwarded) return forwarded;
+  return headers?.get("x-real-ip")?.trim() || undefined;
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

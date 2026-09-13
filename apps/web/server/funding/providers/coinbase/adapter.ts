@@ -61,7 +61,7 @@ export function createCoinbaseProvider(
 
     async createQuote(input, ctx) {
       const startedAt = Date.now();
-      const body = createQuoteBody(input);
+      const body = createQuoteBody(input, ctx);
       const response = await postOrders(
         body,
         ctx,
@@ -190,7 +190,7 @@ export function createCoinbaseProvider(
 
 export const coinbaseProvider = createCoinbaseProvider();
 
-function createQuoteBody(input: QuoteIntent): Record<string, unknown> {
+function createQuoteBody(input: QuoteIntent, ctx: ProviderContext): Record<string, unknown> {
   return {
     isQuote: true,
     paymentMethod: PAYMENT_METHOD,
@@ -199,7 +199,7 @@ function createQuoteBody(input: QuoteIntent): Record<string, unknown> {
     purchaseCurrency: "USDC",
     destinationNetwork: "base",
     destinationAddress: input.destination,
-    partnerUserRef: partnerUserRef(input.destination),
+    partnerUserRef: partnerUserRef(input.destination, ctx.sandbox),
     domain: domainFromReturnUrl(input.returnUrl),
   };
 }
@@ -233,8 +233,9 @@ function createOrderBody(
     purchaseCurrency: "USDC",
     destinationNetwork: "base",
     destinationAddress: input.destination,
-    partnerUserRef: partnerUserRef(input.destination),
+    partnerUserRef: partnerUserRef(input.destination, ctx.sandbox),
     partnerOrderRef: input.homeOrderId,
+    ...(input.clientIp ? { clientIp: input.clientIp } : {}),
     domain,
   };
 }
@@ -327,7 +328,7 @@ function orderFromResponse(
   assertExact(order.purchaseCurrency, "USDC");
   assertExact(order.destinationNetwork, "base");
   assertAddress(order.destinationAddress, input.destination);
-  assertExact(order.partnerUserRef, partnerUserRef(input.destination));
+  assertExact(order.partnerUserRef, partnerUserRef(input.destination, ctx.sandbox));
   const purchaseAmount = readDecimal(order.purchaseAmount, 6);
   const purchaseAmountAtomic = decimalToAtomic(purchaseAmount, 6);
   if (purchaseAmountAtomic !== input.quote.tokenAmountAtomic) {
@@ -338,7 +339,7 @@ function orderFromResponse(
   assertPaymentEquation(paymentTotal, order.paymentSubtotal, fees.totalAtomic);
   const paymentLink = readRecord(envelope.paymentLink);
   assertExact(paymentLink.paymentLinkType, PAYMENT_LINK_TYPE);
-  const paymentUrl = readPaymentUrl(paymentLink.url);
+  const paymentUrl = paymentUrlForMode(readPaymentUrl(paymentLink.url), ctx.sandbox);
   return {
     providerOrderId,
     tokenAddress: ctx.binding.asset.address,
@@ -489,11 +490,19 @@ function readProviderOrderId(value: unknown): string | null {
     : null;
 }
 
-function partnerUserRef(destination: `0x${string}`): string {
-  return createHash("sha256")
+function partnerUserRef(destination: `0x${string}`, sandbox: boolean): string {
+  const reference = createHash("sha256")
     .update(`home:${destination.toLowerCase()}`)
     .digest("hex")
     .slice(0, 32);
+  return sandbox ? `sandbox-${reference}` : reference;
+}
+
+function paymentUrlForMode(value: string, sandbox: boolean): string {
+  if (!sandbox) return value;
+  const url = new URL(value);
+  url.searchParams.set("useApplePaySandbox", "true");
+  return url.toString();
 }
 
 function domainFromReturnUrl(returnUrl: string): string {

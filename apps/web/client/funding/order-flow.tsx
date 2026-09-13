@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { DrawerFooter } from "@/components/ui/drawer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -100,7 +101,7 @@ export function FundingOrderFlow({
         ? ownerQueryKey(queryOwnerKey, "funding-order", order.id)
         : publicQueryKey("funding-order-isolated", order.id)
       : publicQueryKey("funding-order-disabled"),
-    enabled: Boolean(order && !terminal(order.state)),
+    enabled: shouldPollFundingOrder(order),
     // The created order is authoritative for the first poll interval; the
     // provider is polled from then on (matches the previous setInterval cadence).
     initialData: order ?? undefined,
@@ -110,7 +111,7 @@ export function FundingOrderFlow({
     refetchOnWindowFocus: false,
     refetchInterval: (query) => {
       const current = query.state.data as FundingOrderSummary | undefined;
-      return current && !terminal(current.state) ? 4_000 : false;
+      return shouldPollFundingOrder(current) ? 4_000 : false;
     },
     meta: queryOwnerKey ? ownerQueryMeta(queryOwnerKey, "owner") : undefined,
     queryFn: async ({ signal }) => {
@@ -194,7 +195,8 @@ export function FundingOrderFlow({
   if (
     currentOrder?.instructions &&
     currentOrder.expectedTokenAmountAtomic &&
-    !showInstructions
+    !showInstructions &&
+    !terminal(currentOrder.state, currentOrder.sandbox)
   ) {
     return (
       <ProviderEconomicsReview
@@ -374,6 +376,7 @@ function QuoteReview({
             <CardTitle>
               <h3>Review quote</h3>
             </CardTitle>
+            {draft.sandbox ? <SandboxBadge /> : null}
           </CardHeader>
           <CardContent>
             <dl className="space-y-3">
@@ -455,6 +458,7 @@ function ProviderEconomicsReview({
             <CardTitle>
               <h3>Review payment details</h3>
             </CardTitle>
+            {order.sandbox ? <SandboxBadge /> : null}
           </CardHeader>
           <CardContent>
             <dl className="space-y-3">
@@ -502,12 +506,13 @@ function OrderStatus({
   onBack: () => void;
   onRefetch?: () => Promise<unknown>;
 }) {
-  const copy = stateCopy(order.state);
+  const copy = stateCopy(order.state, order.sandbox);
   return (
     <>
       <MoneyModalBody className="gap-4 pt-4">
         <h3 className="text-lg font-semibold">{copy.title}</h3>
-        <FundingNotice>{copy.body}</FundingNotice>
+        {order.sandbox ? <SandboxBadge /> : null}
+        {copy.body ? <FundingNotice>{copy.body}</FundingNotice> : null}
         {order.instructions &&
         (order.instructions.kind !== "embed" || order.state === "awaiting-payment") ? (
           <InstructionView
@@ -771,7 +776,11 @@ function FundingNotice({
   );
 }
 
-function stateCopy(state: string) {
+function SandboxBadge() {
+  return <Badge variant="outline">Sandbox — not a real deposit</Badge>;
+}
+
+function stateCopy(state: string, sandbox = false) {
   if (state === "received")
     return {
       title: "Money received",
@@ -783,10 +792,15 @@ function stateCopy(state: string) {
       body: "The provider may have received this request. Home retained the original order and will not send it twice.",
     };
   if (state === "sent-unverified")
-    return {
-      title: "Transfer sent, still verifying",
-      body: "Home is waiting for an exact matching Base receipt.",
-    };
+    return sandbox
+      ? {
+          title: "Sandbox complete — no real funds moved",
+          body: null,
+        }
+      : {
+          title: "Transfer sent, still verifying",
+          body: "Home is waiting for an exact matching Base receipt.",
+        };
   if (["failed", "cancelled", "expired", "refunded"].includes(state))
     return {
       title: "Deposit not completed",
@@ -797,8 +811,14 @@ function stateCopy(state: string) {
     body: "Complete the payment instructions. Home will keep checking the provider and Base receipt.",
   };
 }
-function terminal(state: string) {
-  return [
+export function shouldPollFundingOrder(
+  order: Pick<FundingOrderSummary, "state" | "sandbox"> | null | undefined,
+) {
+  return Boolean(order && !terminal(order.state, order.sandbox));
+}
+
+function terminal(state: string, sandbox = false) {
+  return (sandbox && state === "sent-unverified") || [
     "received",
     "dispatch-ambiguous",
     "failed",

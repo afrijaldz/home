@@ -12,6 +12,7 @@ type BunSqlClient = { unsafe(text: string, values?: unknown[]): Promise<ArrayLik
 let client: BunSqlClient;
 let store: PostgresFundingOrderStore;
 let hostedRetirementMigration: string;
+let sandboxMigration: string;
 
 function reservation(intentDigest = randomUUID()): FundingReservation {
   return {
@@ -19,7 +20,7 @@ function reservation(intentDigest = randomUUID()): FundingReservation {
     destination: "0x1111111111111111111111111111111111111111", providerId: "idrx",
     region: "ID", assetId: "base:idrx", paymentMethod: "qris", fiatAmount: "20000",
     intentDigest, quote: { fiatAmount: "20000", tokenAmountAtomic: "2000000", fees: [], expiresAt: "2099-01-01T00:00:00.000Z" },
-    quoteToken: `signed-${intentDigest}`, customerRef: null, creationBlock: "100",
+    quoteToken: `signed-${intentDigest}`, customerRef: null, sandbox: false, creationBlock: "100",
     createdAt: "2026-09-12T00:00:00.000Z",
   };
 }
@@ -30,9 +31,11 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
     client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
     const migration = await readFile(resolve(import.meta.dir, "../migrations/002_funding_provider_seam.sql"), "utf8");
     hostedRetirementMigration = await readFile(resolve(import.meta.dir, "../migrations/003_coinbase_hosted_retired.sql"), "utf8");
+    sandboxMigration = await readFile(resolve(import.meta.dir, "../migrations/004_funding_sandbox.sql"), "utf8");
     await client.unsafe("DROP TABLE IF EXISTS funding_orders");
     await client.unsafe(migration);
     await client.unsafe(hostedRetirementMigration);
+    await client.unsafe(sandboxMigration);
     store = new PostgresFundingOrderStore(bunExecutor(client));
   });
   beforeEach(async () => { await client.unsafe("TRUNCATE funding_orders"); });
@@ -46,6 +49,13 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
     expect(results.filter((result) => result.created)).toHaveLength(1);
     expect(results[0].order.id).toBe(results[1].order.id);
     expect(results[0].order.quoteToken).toBe(left.quoteToken);
+  });
+
+  test("sandbox flag round-trips through reservations", async () => {
+    const input = { ...reservation(), sandbox: true };
+    const reserved = await store.reserve(input);
+    expect(reserved.order.sandbox).toBe(true);
+    expect((await store.getOwned(input.id, input.owner))?.sandbox).toBe(true);
   });
 
   test("CAS rejects stale observations and terminal states cannot reopen", async () => {

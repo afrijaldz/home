@@ -1,6 +1,6 @@
 # Coinbase headless Onramp
 
-Status: implemented on the funding provider seam for #294. **No live call made by this branch (September 13, 2026).**
+Status: implemented on the funding provider seam for #294. A live sandbox quote reached Coinbase on September 13, 2026; local order creation is currently blocked when Coinbase receives a loopback/private client IP.
 
 ## Binding
 
@@ -15,7 +15,7 @@ The binding is eligible only when both existing server variables are configured:
 - `CDP_API_KEY_ID`
 - `CDP_API_KEY_SECRET`
 
-No new environment variable, `NEXT_PUBLIC_` variable, sandbox flag, or customer-token storage is introduced.
+The adapter supports the core-owned local sandbox switch described below. It does not introduce a provider-specific sandbox variable, a `NEXT_PUBLIC_` variable, or customer-token storage.
 
 ## API calls
 
@@ -65,6 +65,18 @@ Status mapping:
 
 A transaction hash is forwarded only when it is exactly a 32-byte hexadecimal hash.
 
+## Sandbox dry run
+
+Sandbox mode is for local dry runs only and must never be enabled on Vercel:
+
+```sh
+FUNDING_SANDBOX=1
+```
+
+The core lists only sandbox-capable providers in this mode. Coinbase uses the production CDP API key, prefixes `partnerUserRef` with `sandbox-`, sends the request's forwarded client IP, and appends `useApplePaySandbox=true` to the returned payment link. Use `+1000…` phone numbers, `*@sandbox.test` email addresses, and OTP `000000` inside the sandbox flow. Coinbase sandbox never moves real USDC, so Home stops at `sent-unverified` and displays the run as complete without receipt verification. Coinbase rejects loopback/private client IPs, so a local run must reach Home through a route that supplies a public forwarded client IP; Home does not fabricate an override.
+
+As verified on September 13, 2026, production embedded order creation without email or phone currently returns `400 InvalidRequest: Email is required` for this CDP account. The otherwise identical `sandbox-` request succeeds, which is why this local sandbox path exists while production embedded identities are not enabled.
+
 ## How to test
 
 Automated tests use only fixtures marked `source: "synthetic"`:
@@ -87,5 +99,5 @@ Apple Pay in a cross-origin iframe on localhost remains unverified until this ru
 
 - In CDP Portal, allowlist and verify Home's production and preview domains for Apple Pay. `localhost` needs no registration.
 - Confirm the existing CDP API credentials remain configured in Vercel.
-- No Vercel environment variable is added by #294.
+- Never set `FUNDING_SANDBOX` on Vercel; it is only for local dry runs.
 - A pre-existing `dispatch-ambiguous` order has no UI recovery and remains resumable; for a local proof, delete that row before retrying.

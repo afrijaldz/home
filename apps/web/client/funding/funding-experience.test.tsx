@@ -7,6 +7,7 @@ import { getHomeQueryClient } from "@/client/query/query-client";
 
 const { act, cleanup, fireEvent, render, waitFor } = await import("@testing-library/react");
 const { FundingExperienceForWallet } = await import("./funding-experience");
+const { shouldPollFundingOrder } = await import("./order-flow");
 
 const ADDRESS_A = "0x1111111111111111111111111111111111111111" as const;
 const ADDRESS_B = "0x2222222222222222222222222222222222222222" as const;
@@ -100,6 +101,7 @@ describe("FundingExperience", () => {
     for (const key of ["1", "0", "0", "0"]) fireEvent.click(page().getByRole("button", { name: key }));
     fireEvent.click(page().getByRole("button", { name: "Review quote" }));
     await page().findByRole("heading", { name: "Review quote" });
+    expect(page().queryByText("Sandbox — not a real deposit")).toBeNull();
     expect(page().getByText("Receive").parentElement?.textContent).toContain("1.000\u00A0wARS");
     expect(page().getByText("Rail").parentElement?.textContent).toContain("$10,00");
     fireEvent.click(page().getByRole("button", { name: "Confirm deposit" }));
@@ -110,6 +112,55 @@ describe("FundingExperience", () => {
     await page().findByText("Deposit pending");
     expect(page().getByText("1234567890")).toBeTruthy();
     expect(requests.find((item) => item.path === "/api/funding/orders")?.body).toEqual({ quoteToken: "signed-token" });
+  });
+
+  test("shows the sandbox badge on all three review and status screens", async () => {
+    const wallet = {
+      ...verifiedWallet(),
+      fetchAccountResource: async (path: string) => {
+        if (path.startsWith("/api/funding/providers")) return { providers: [fundingBinding()] };
+        if (path.startsWith("/api/funding/orders?")) return { order: null };
+        if (path === "/api/funding/quotes") return { sandbox: true, quoteToken: "sandbox-token", quote: { fiatAmount: "1000", tokenAmountAtomic: "1000000000000000000000", fees: [], expiresAt: "2099-01-01T00:00:00.000Z" } };
+        if (path === "/api/funding/orders") return { order: { id: "11111111-1111-4111-8111-111111111111", providerId: "ripio", sandbox: true, state: "awaiting-payment", fiatAmount: "1000", expectedTokenAmountAtomic: "1000000000000000000000", fees: [], providerStatus: null, instructions: { kind: "bank-transfer", rail: "CVU", accountNumber: "1234567890", amount: "1000", currency: "ARS" } } };
+        throw new Error("unexpected request");
+      },
+    };
+    render(<FundingExperienceForWallet wallet={wallet} navigateToRedirect={() => {}} regionId="AR" />);
+    fireEvent.click(await page().findByRole("button", { name: /Deposit ARS with Ripio/ }));
+    for (const key of ["1", "0", "0", "0"]) fireEvent.click(page().getByRole("button", { name: key }));
+    fireEvent.click(page().getByRole("button", { name: "Review quote" }));
+    await page().findByRole("heading", { name: "Review quote" });
+    expect(page().getAllByText("Sandbox — not a real deposit")).toHaveLength(1);
+    fireEvent.click(page().getByRole("button", { name: "Confirm deposit" }));
+    await page().findByRole("heading", { name: "Review payment details" });
+    expect(page().getAllByText("Sandbox — not a real deposit")).toHaveLength(1);
+    fireEvent.click(page().getByRole("button", { name: "View payment instructions" }));
+    await page().findByText("Deposit pending");
+    expect(page().getAllByText("Sandbox — not a real deposit")).toHaveLength(1);
+  });
+
+  test("stops polling sandbox sent-unverified orders but continues for live orders", () => {
+    expect(shouldPollFundingOrder({ state: "sent-unverified", sandbox: true })).toBe(false);
+    expect(shouldPollFundingOrder({ state: "sent-unverified", sandbox: false })).toBe(true);
+    expect(shouldPollFundingOrder({ state: "awaiting-payment", sandbox: true })).toBe(true);
+  });
+
+  test("shows sandbox sent-unverified as complete without polling", async () => {
+    let statusCalls = 0;
+    const order = { id: "11111111-1111-4111-8111-111111111111", providerId: "coinbase", sandbox: true, state: "sent-unverified", fiatAmount: "5", expectedTokenAmountAtomic: "4880000", fees: [{ label: "Coinbase fee", amount: "0.12", currency: "USD" }], providerStatus: "ONRAMP_ORDER_STATUS_COMPLETED", instructions: { kind: "embed", url: APPLE_PAY_URL, presentation: "apple-pay", amount: "5", currency: "USD" } };
+    const wallet = {
+      ...verifiedWallet(),
+      fetchAccountResource: async (path: string) => {
+        if (path.startsWith("/api/funding/providers")) return { providers: [applePayBinding()] };
+        if (path.includes("/api/funding/orders/11111111")) { statusCalls += 1; return { order }; }
+        if (path.startsWith("/api/funding/orders?")) return { order };
+        throw new Error("unexpected request");
+      },
+    };
+    render(<FundingExperienceForWallet wallet={wallet} navigateToRedirect={() => {}} regionId="US" />);
+    expect(await page().findByRole("heading", { name: "Sandbox complete — no real funds moved" })).toBeTruthy();
+    expect(page().getAllByText("Sandbox — not a real deposit")).toHaveLength(1);
+    expect(statusCalls).toBe(0);
   });
 
   test("retries a lost order response with the exact original quote token", async () => {

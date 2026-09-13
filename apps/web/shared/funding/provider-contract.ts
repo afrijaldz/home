@@ -13,6 +13,7 @@ export type FundingProviderManifest = {
   }>;
   apiOrigins: ReadonlyArray<string>;
   redirectOrigins?: ReadonlyArray<string>;
+  sandbox?: boolean;
   reference: "home" | "provider";
   quotes?: boolean;
   kyc?: {
@@ -50,6 +51,7 @@ export type ProviderContext = {
     paymentMethod: { id: string; label: string };
   };
   env: Readonly<Record<string, string>>;
+  sandbox: boolean;
   fetch: typeof fetch;
 };
 
@@ -74,6 +76,7 @@ export type OrderIntent = {
   fiatAmount: string;
   quote?: Quote;
   customerRef?: string;
+  clientIp?: string;
   returnUrl: string;
 };
 

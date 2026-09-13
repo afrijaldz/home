@@ -198,7 +198,8 @@ Cut after review to keep the first version small. Each is a follow-up if a real 
 - After a provider reports `created`, the core validates every `redirect` and `embed` URL before persisting instructions: HTTPS, an origin declared by `manifest.redirectOrigins`, no username/password/fragment, and at most 4096 characters. Failure is `dispatch-ambiguous` because the provider request may have succeeded.
 - If a provider cannot lock a quote, the adapter requests the exact quoted token amount on create and reports the resulting fiat total on the instruction. Coinbase follows this rule by pinning USDC `purchaseAmount`; a changed USD total is reviewed in Home and authorized again in Apple Pay.
 - Coinbase's hosted redirect and `/platform/v2/onramp/sessions` path were removed. Migration `003_coinbase_hosted_retired.sql` terminalizes any remaining open `coinbase` / `hosted` rows so they no longer block or resume the US flow.
-- No environment variable was added for #294; `.env.example` is unchanged.
+- Live sandbox validation found that Coinbase requires `clientIp` on order creation even though its reference marks the field optional. The orders route passes the first `x-forwarded-for` hop (falling back to `x-real-ip`) through the core as an ephemeral `OrderIntent.clientIp`; it is never persisted, signed into quote claims, logged, or returned publicly.
+- Sandbox mode is core-owned and enabled only by `FUNDING_SANDBOX=1`: the core lists only providers declaring `manifest.sandbox: true`, passes `ctx.sandbox`, binds the mode into signed quote tokens and persisted orders, and exposes it to the client. Sandbox orders never run receipt verification; when a provider reports `sent`, their ceiling is the terminal `sent-unverified` state because no real funds move.
 
 ## Implementation notes and deviations (#301)
 

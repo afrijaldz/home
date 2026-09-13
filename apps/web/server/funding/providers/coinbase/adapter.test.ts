@@ -52,11 +52,12 @@ const provider = createCoinbaseProvider({
   generateJwtImplementation: async () => "synthetic-jwt",
 });
 
-function partnerUserRef(destination = DESTINATION): string {
-  return createHash("sha256")
+function partnerUserRef(destination = DESTINATION, sandbox = false): string {
+  const reference = createHash("sha256")
     .update(`home:${destination.toLowerCase()}`)
     .digest("hex")
     .slice(0, 32);
+  return sandbox ? `sandbox-${reference}` : reference;
 }
 
 function orderRecord(overrides: Record<string, unknown> = {}) {
@@ -116,6 +117,7 @@ function statusResponse(overrides: Record<string, unknown> = {}): Response {
 function context(
   fetchImplementation: typeof fetch,
   paymentMethodId = "apple-pay",
+  sandbox = false,
 ) {
   return createProviderContext({
     manifest: coinbaseManifest,
@@ -123,6 +125,7 @@ function context(
     paymentMethodId,
     env,
     fetchImplementation,
+    sandbox,
   });
 }
 
@@ -157,6 +160,7 @@ describe("Coinbase headless funding adapter", () => {
         env: ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET"],
       },
     ]);
+    expect(coinbaseManifest.sandbox).toBe(true);
     expect(coinbaseManifest.reference).toBe("provider");
     expect(coinbaseManifest.quotes).toBe(true);
     expect(coinbaseManifest.redirectOrigins).toEqual(["https://pay.coinbase.com"]);
@@ -264,6 +268,54 @@ describe("Coinbase headless funding adapter", () => {
     expect(body).not.toHaveProperty("paymentAmount");
     expect(body).not.toHaveProperty("isQuote");
     expect(result).toMatchObject({ outcome: "created" });
+  });
+
+  test("includes the core-supplied client IP only when present", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImplementation = (async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return createResponse();
+    }) as unknown as typeof fetch;
+
+    await provider.createOrder({ ...intent, clientIp: "203.0.113.4" }, context(fetchImplementation));
+    await provider.createOrder(intent, context(fetchImplementation));
+
+    expect(bodies[0]?.clientIp).toBe("203.0.113.4");
+    expect(bodies[1]).not.toHaveProperty("clientIp");
+  });
+
+  test("uses Coinbase sandbox references and Apple Pay URL only when the core context is sandboxed", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const sandboxContext = context((async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+      requests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return requests.length === 1
+        ? quoteResponse({ partnerUserRef: partnerUserRef(DESTINATION, true), status: "" })
+        : createResponse({ partnerUserRef: partnerUserRef(DESTINATION, true) });
+    }) as unknown as typeof fetch, "apple-pay", true);
+
+    await provider.createQuote!(quoteIntent, sandboxContext);
+    const result = await provider.createOrder(intent, sandboxContext);
+
+    expect(requests[0]?.partnerUserRef).toBe(partnerUserRef(DESTINATION, true));
+    expect(requests[1]?.partnerUserRef).toBe(partnerUserRef(DESTINATION, true));
+    expect(result).toMatchObject({
+      outcome: "created",
+      order: {
+        instructions: {
+          kind: "embed",
+          url: `${PAYMENT_URL}?useApplePaySandbox=true`,
+        },
+      },
+    });
+
+    const liveResult = await provider.createOrder(
+      intent,
+      context((async () => createResponse()) as unknown as typeof fetch),
+    );
+    expect(liveResult).toMatchObject({
+      outcome: "created",
+      order: { instructions: { url: PAYMENT_URL } },
+    });
   });
 
   test("rejects a missing quote before JWT generation or HTTP", async () => {

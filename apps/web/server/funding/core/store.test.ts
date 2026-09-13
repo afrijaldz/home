@@ -8,7 +8,7 @@ const base: FundingReservation = {
   destination: "0x1111111111111111111111111111111111111111", providerId: "idrx",
   region: "ID", assetId: "base:idrx", paymentMethod: "qris", fiatAmount: "20000.00",
   intentDigest: "digest", quote: { fiatAmount: "20000.00", tokenAmountAtomic: "2000000", fees: [], expiresAt: "2099-01-01T00:00:00.000Z" },
-  quoteToken: "signed-token", customerRef: null, creationBlock: "100", createdAt: "2026-09-12T00:00:00.000Z",
+  quoteToken: "signed-token", customerRef: null, sandbox: false, creationBlock: "100", createdAt: "2026-09-12T00:00:00.000Z",
 };
 
 describe("MemoryFundingOrderStore contract", () => {

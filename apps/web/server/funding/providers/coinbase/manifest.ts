@@ -23,6 +23,7 @@ export const coinbaseManifest = {
   ],
   apiOrigins: [COINBASE_ONRAMP_API_ORIGIN],
   redirectOrigins: [COINBASE_ONRAMP_REDIRECT_ORIGIN],
+  sandbox: true,
   reference: "provider",
   quotes: true,
 } as const satisfies FundingProviderManifest;

@@ -12,13 +12,17 @@ import { FundingCore } from "./service";
 const session: VerifiedAccountSession = { user: { subject: "user" }, accountProvider: "base-account", smartAccount: { address: "0x1111111111111111111111111111111111111111", chainId: 8453 } };
 const manifest = { id: "fixture", displayName: "Fixture", docsUrl: "https://example.com", bindings: [{ region: "ID", assetId: "base:idrx", paymentMethods: [{ id: "bank", label: "Bank" }], env: ["FIXTURE_KEY"] }], apiOrigins: ["https://example.com"], reference: "home" } as const satisfies FundingProviderManifest;
 
-function setup(outcome: "created" | "ambiguous" = "created") {
+function setup(
+  outcome: "created" | "ambiguous" = "created",
+  options: { sandbox?: boolean; providerSandbox?: boolean } = {},
+) {
   let dispatches = 0;
   let blockReads = 0;
+  let receiptVerifications = 0;
   let observation: "awaiting-payment" | "sent" = "awaiting-payment";
   let date = new Date("2026-09-12T00:00:00.000Z");
   const provider: FundingProvider = {
-    manifest,
+    manifest: options.providerSandbox ? { ...manifest, sandbox: true } : manifest,
     async createOrder(input, ctx) {
       dispatches += 1;
       expect(input.destination).toBe(session.smartAccount!.address);
@@ -27,11 +31,91 @@ function setup(outcome: "created" | "ambiguous" = "created") {
     },
     async getOrder() { return { state: observation, providerStatus: observation, transactionHash: observation === "sent" ? `0x${"2".repeat(64)}` : null }; },
   };
-  const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) }, currentBaseBlock: async () => { blockReads += 1; return "500"; }, verifyReceipt: async (_order, hash) => ({ transactionHash: hash, logIndex: 4 }), now: () => date });
-  return { core, dispatches: () => dispatches, blockReads: () => blockReads, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
+  const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32), ...(options.sandbox ? { FUNDING_SANDBOX: "1" } : {}) }, currentBaseBlock: async () => { blockReads += 1; return "500"; }, verifyReceipt: async (_order, hash) => { receiptVerifications += 1; return { transactionHash: hash, logIndex: 4 }; }, now: () => date });
+  return { core, dispatches: () => dispatches, blockReads: () => blockReads, receiptVerifications: () => receiptVerifications, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
 }
 
 describe("FundingCore", () => {
+  test("lists only sandbox-capable providers in sandbox mode and leaves normal listing unchanged", async () => {
+    const sandboxProvider: FundingProvider = {
+      manifest: { ...manifest, id: "sandbox-fixture", sandbox: true },
+      async createOrder() { return { outcome: "ambiguous" }; },
+      async getOrder() { return { state: "unknown", providerStatus: "unknown" }; },
+    };
+    const liveProvider: FundingProvider = {
+      manifest: { ...manifest, id: "live-fixture" },
+      async createOrder() { return { outcome: "ambiguous" }; },
+      async getOrder() { return { state: "unknown", providerStatus: "unknown" }; },
+    };
+    const dependencies = {
+      providers: [sandboxProvider, liveProvider],
+      store: new MemoryFundingOrderStore(),
+      currentBaseBlock: async () => "1",
+      verifyReceipt: async () => null,
+    };
+    const sandboxCore = new FundingCore({
+      ...dependencies,
+      env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32), FUNDING_SANDBOX: "1" },
+    });
+    const liveCore = new FundingCore({
+      ...dependencies,
+      env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) },
+    });
+
+    expect((await sandboxCore.listProviders("ID", session)).map((item) => item.providerId)).toEqual(["sandbox-fixture"]);
+    expect((await liveCore.listProviders("ID", session)).map((item) => item.providerId)).toEqual(["sandbox-fixture", "live-fixture"]);
+  });
+
+  test("rejects quote tokens when the core sandbox mode changes", async () => {
+    const sandbox = setup("created", { sandbox: true, providerSandbox: true });
+    const quote = await sandbox.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
+    expect(quote.sandbox).toBe(true);
+
+    const live = setup("created", { providerSandbox: true });
+    await expect(live.core.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example")).rejects.toMatchObject({ code: "INVALID_QUOTE_TOKEN" });
+    expect(live.blockReads()).toBe(0);
+    expect(live.dispatches()).toBe(0);
+  });
+
+  test("exposes sandbox orders and never verifies receipts for them", async () => {
+    const fixture = setup("created", { sandbox: true, providerSandbox: true });
+    const quote = await fixture.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
+    const created = await fixture.core.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example");
+    expect(created.sandbox).toBe(true);
+    fixture.sent();
+    const completed = await fixture.core.getOrder(session, created.id);
+    expect(completed).toMatchObject({ sandbox: true, state: "sent-unverified" });
+    expect(fixture.receiptVerifications()).toBe(0);
+  });
+
+  test("passes the first forwarded client IP hop to the provider without persisting it", async () => {
+    let capturedClientIp: string | undefined;
+    const provider: FundingProvider = {
+      manifest,
+      async createOrder(input, ctx) {
+        capturedClientIp = input.clientIp;
+        return { outcome: "created", order: { providerOrderId: "fixture-order", tokenAddress: ctx.binding.asset.address, expectedTokenAmountAtomic: input.quote!.tokenAmountAtomic, fees: [], expiresAt: null, instructions: { kind: "bank-transfer", rail: "VA", accountNumber: "12345678", amount: input.fiatAmount, currency: "IDR" } } };
+      },
+      async getOrder() { return { state: "unknown", providerStatus: "unknown" }; },
+    };
+    const core = new FundingCore({
+      providers: [provider],
+      store: new MemoryFundingOrderStore(),
+      env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) },
+      currentBaseBlock: async () => "1",
+      verifyReceipt: async () => null,
+    });
+    const quote = await core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
+    const order = await core.createOrder(
+      session,
+      { quoteToken: quote.quoteToken },
+      "https://home.example",
+      new Headers({ "x-forwarded-for": " 203.0.113.4, 10.0.0.2 ", "x-real-ip": "198.51.100.7" }),
+    );
+    expect(capturedClientIp).toBe("203.0.113.4");
+    expect(order).not.toHaveProperty("clientIp");
+  });
+
   test("binds a quote to the verified destination and dispatches exactly once", async () => {
     const fixture = setup();
     const quote = await fixture.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000.00" }, "https://home.example");

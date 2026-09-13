@@ -26,6 +26,7 @@ export type FundingOrder = {
   quote: Quote;
   quoteToken: string;
   customerRef: string | null;
+  sandbox: boolean;
   state: OrderState;
   creationBlock: string;
   providerOrderId: string | null;
@@ -44,7 +45,7 @@ export type FundingOrder = {
 
 export type FundingReservation = Pick<FundingOrder,
   "id" | "owner" | "destination" | "providerId" | "region" | "assetId" |
-  "paymentMethod" | "fiatAmount" | "intentDigest" | "quote" | "quoteToken" | "customerRef" |
+  "paymentMethod" | "fiatAmount" | "intentDigest" | "quote" | "quoteToken" | "customerRef" | "sandbox" |
   "creationBlock" | "createdAt"
 >;
 
