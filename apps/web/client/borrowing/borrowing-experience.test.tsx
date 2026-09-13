@@ -12,7 +12,7 @@ import {
   BORROW_ORACLE_ADDRESS,
   MORPHO_BLUE_ADDRESS,
 } from "@/shared/borrowing/config";
-import type { BorrowMarketSnapshot } from "@/shared/borrowing/types";
+import type { BorrowMarketSnapshot } from "@/shared/borrowing/contract";
 
 const { cleanup, fireEvent, render, within } = await import("@testing-library/react");
 const { BorrowExperience } = await import("./borrowing-experience");
@@ -61,9 +61,15 @@ afterEach(() => {
 describe("BorrowExperience", () => {
   test("shows the single verified market while keeping a signed-out wallet truly empty", () => {
     render(<BorrowExperience session={null} />);
-    expect(within(document.body).getByRole("heading", { level: 1, name: "USDC against cbBTC" })).toBeTruthy();
-    expect(within(document.body).getByText(/Sign in to view this wallet’s position/)).toBeTruthy();
-    expect(document.body.textContent).not.toContain("Demo balance");
+
+    const body = within(document.body);
+    expect(body.getByRole("heading", { level: 1, name: "USDC against cbBTC" })).toBeTruthy();
+    expect(body.getByRole("status").textContent).toContain(
+      "Sign in to view this wallet’s position",
+    );
+    expect(body.queryByRole("heading", { name: "Wallet and position" })).toBeNull();
+    expect(body.queryByLabelText("Action")).toBeNull();
+    expect(body.queryByRole("button", { name: "Review current preview" })).toBeNull();
   });
 
   test("loads private state and sends only user intent to the unified prepare action", async () => {

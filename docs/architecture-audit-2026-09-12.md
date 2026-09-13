@@ -1,6 +1,6 @@
 # Architecture audit — September 12, 2026
 
-Audit of `main` at `b9ecca1` against `home-is-thin.md` (five invariants, deliberate data model, client architecture) and the Rainbow teardown lessons. Two independent read-only auditors (server + funding seam; client) produced the findings; the coordinator verified the load-bearing claims (F1, F4, A-12, A-21) by hand and wrote the plan. Companion: [Design-system audit](design-system-audit-2026-09-12.md).
+Audit of `main` at `b9ecca1` against `home-is-thin.md` (five invariants, deliberate data model, client architecture) and the Rainbow teardown lessons. Two independent read-only auditors (server + funding seam; client) produced the findings; the coordinator verified the load-bearing claims (F1, F4, A-12, A-21) by hand and wrote the plan.
 
 ## Summary
 
@@ -41,7 +41,7 @@ Independently mergeable, one writer each, `bun check` + browser smoke on the int
 | **S6 One Base RPC client + one catalog** | A-14, A-15, A-17 (D5) | new `server/chain/rpc.ts`, `shared/assets/base.ts`, then `server/portfolio`, `server/savings`, `server/borrowing`, `server/morpho`, `config/*` | `rg 'jsonrpc: "2.0"' server` → 1 file; USDC literal in 1 non-test file; `GET /api/portfolio` retired; `sharedReaders` bounded. Split S6a/S6b if two writers |
 | **C6 Perf marks + lazy SDK** | F10, F11, F12 | `client/observability/perf-marks.ts`, `client/home/shell.tsx`, `client/account/cdp-client.tsx`, `app/layout.tsx`, `app/page.tsx` | `balances:painted` only on `ready`; `activity:first-row`, `save:ready`, `invest:ready` present; bundle before/after recorded |
 
-Order: wave 1 = S1, S2, C1 (zero decision, disjoint). Wave 2 = C2, C3, S3 (C2 after S1 for `receipt.ts`). Wave 3 = C4, C5, S4, S5 (after D1–D4). Wave 4 = S6, C6. The design-system lanes run alongside on their own spine; C3 is shared with DS-01.
+Order: wave 1 = S1, S2, C1 (zero decision, disjoint). Wave 2 = C2, C3, S3 (C2 after S1 for `receipt.ts`). Wave 3 = C4, C5, S4, S5 (after D1–D4). Wave 4 = S6, C6. The former UI migration lanes ran alongside on their own spine; C3 was shared with DS-01.
 
 ## Findings — server, data, funding seam
 

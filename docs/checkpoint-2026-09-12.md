@@ -15,7 +15,7 @@ State of `main` after the reset program. Read `home-is-thin.md` for the architec
 2. Reset (#333): `prepare → confirm → dispatch → handle`, CDP `idempotencyKey = action.id`, Base EIP-5792 `id = action.id`, derived status, one `ownerGeneration` fence, browser SDK imports restricted to `client/account`. Reviewed twice (design, post-integration); nits fixed.
 3. Client data layer: TanStack Query with owner-prefixed keys, generation-bump cache clearing and per-owner persister, post-action fresh-balance loop (`?fresh=1`, rate-limited).
 4. Shell: panels stay mounted; shallow `pushState` routing; `?flow=send&action=<id>` resumes an unconfirmed review from `GET /api/actions/:id`; inbound-intent allowlist; performance marks with a CI budget.
-5. Recognized tokens on nested Balances (#337); money/locale formatting module (ICU-deterministic typography); `@home/ui` primitives, surfaces, 6px radii, press feedback, `MoneyTicker`; adoption across screens and components.
+5. Recognized tokens on nested Balances (#337); money/locale formatting module (ICU-deterministic typography); the private UI package (now removed), 6px radii, press feedback, and `MoneyTicker`; adoption across screens and components.
 6. Test volume (#326): shared fixtures under `apps/web/tests/helpers`, one route contract test, UI tests trimmed to bug-guarding behavior.
 7. Ported from the other session: activity copy, panel focus outline, Safari sheet anchoring with the WebKit smoke project, partial-label removal.
 8. Docs: obsolete ledger docs deleted; `home-is-thin.md` gained client-architecture and performance rules; index rebuilt.
@@ -41,13 +41,13 @@ Branch from `origin/main`, work in a worktree, run `bun check` and `bun run --cw
 
 ## Evening addendum — cleanup program (same day)
 
-After the audits (`architecture-audit-2026-09-12.md`, `design-system-audit-2026-09-12.md`) four waves landed on `main`, each integrated by the coordinator, gated by `bun check` + web smoke + design-system suite (+ Postgres contracts), and independently reviewed before the fast-forward:
+After the architecture and former UI audits, four waves landed on `main`, each integrated by the coordinator, gated by `bun check`, web smoke, the then-current catalog suite, and Postgres contracts, and independently reviewed before the fast-forward:
 
-- **Wave 1** (`da08a87`): server dead code (−2,700), funding token identity + Ripio legacy (−900), persisted query cache hydrates + one after-action invalidation, DS tokens + adoption guardrails (`bun run ds:audit`, baseline in CI).
+- **Wave 1** (`da08a87`): server dead code (−2,700), funding token identity + Ripio legacy (−900), persisted query cache hydrates + one after-action invalidation, UI tokens plus the former adoption audit, which was later removed with the private package.
 - **Wave 2** (`6a613c2`): one `ActionKind`, single prepare route (−1,400), one formatting module + lint ban, observability on money-moving paths + glob route contract, `Sheet` primitive.
 - **Wave 3** (`1894271`): `authorizeSession`, stateless SIWE challenge, `user_settings` dropped, `bun run db:migrate` (idempotent, migrate-first in CI), Coinbase as a manifest provider, mounted panels + `?flow=` URLs, `/borrow` route deleted, `Field/Input/Select`.
 - **Wave 4** (`61e7e4d`): one Base RPC client + one asset catalog, RPC-only vault positions, `/api/portfolio` retired, account split (no file > 400 LOC), deferred SDK/globe (initial JS −46–49%), `ListRow/Badge/Divider`, `Skeleton/EmptyState/StatusMessage/Toast`; hydration mismatch on deep links fixed (server page passes `searchParams` to the shell).
 
-Review-found regressions fixed before each push are listed in the wave commits (`fix(web): wave-N review findings`). All 22 architecture findings that had a decision are closed; decisions D1–D6 recorded in the architecture audit. Remaining program: design-system adoption lanes L5–L9 by surface.
+Review-found regressions fixed before each push are listed in the wave commits (`fix(web): wave-N review findings`). All 22 architecture findings that had a decision are closed; decisions D1–D6 recorded in the architecture audit. The remaining program was the UI adoption lanes by surface; issue #347 later completed them.
 
-Operator notes: run `bun run db:migrate` once against Neon before the next deploy (idempotent; safe on the database the former runtime DDL created). `HOME_SESSION_SECRET` also signs the SIWE challenge. DS counts since morning: raw buttons 59→49, raw headings 25→22, raw prose 104→76, colour literals 68→46, radius literals 22→11; `@home/ui` imported by 22 files (was 13).
+Operator notes: run `bun run db:migrate` once against Neon before the next deploy (idempotent; safe on the database the former runtime DDL created). `HOME_SESSION_SECRET` also signs the SIWE challenge. The former audit counts were raw buttons 59→49, raw headings 25→22, raw prose 104→76, colour literals 68→46, and radius literals 22→11; the private package was imported by 22 files (previously 13).

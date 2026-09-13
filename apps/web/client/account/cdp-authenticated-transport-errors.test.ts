@@ -25,7 +25,7 @@ const ownerFence: OwnerGenerationFence = {
   isCurrent: (identity) => identity === 0,
   assertCurrent: () => {},
   updateAuthorizationBoundary: () => {},
-  updateOwnerKey: () => {},
+  updateOwnerKey: () => false,
 };
 
 afterEach(() => {
@@ -39,6 +39,7 @@ async function transportWith(sessionFetch: SessionFetch) {
       const transport = useAuthenticatedTransport({
         session,
         status: "verified",
+        verification: "server",
         ownerKey: "owner",
         ownerFence,
         getAccessToken: async () => null,

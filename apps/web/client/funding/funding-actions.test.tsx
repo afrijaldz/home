@@ -78,13 +78,13 @@ describe("FundingActions hydration", () => {
 
     try {
       expect(fixture.serverMarkup).toContain("Add money");
-      expect(fixture.serverMarkup).not.toContain("<dialog");
+      expect(fixture.serverMarkup).not.toContain('data-slot="drawer-popup"');
       expect(fixture.hydrationErrors).toEqual([]);
-      const dialog = document.body.querySelector('[role="dialog"][data-open]');
-      expect(dialog).not.toBeNull();
-      expect(dialog?.textContent).toContain("Receive on Base");
-      expect(dialog?.textContent).toContain("0x1111…111111");
-      expect(dialog?.closest(".action-row")).toBeNull();
+      const drawer = document.body.querySelector('[data-slot="drawer-popup"]');
+      expect(drawer).not.toBeNull();
+      expect(drawer?.textContent).toContain("Receive on Base");
+      expect(drawer?.textContent).toContain("0x1111…111111");
+      expect(drawer?.closest(".action-row")).toBeNull();
     } finally {
       await unmount(fixture.root, fixture.container);
     }

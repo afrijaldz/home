@@ -12,25 +12,18 @@ import {
   pollTransactionResolution,
 } from "./action-resolution";
 import type { OperationResult, PreparedMoneyAction } from "@/shared/money-actions/types";
+import { validPrepared } from "@/shared/actions/contracts/prepare";
+import { parsePendingActionResponse } from "@/shared/actions/contracts/get";
+import { parseConfirmActionResponse } from "@/shared/actions/contracts/confirm";
+import type { HandleActionRequest } from "@/shared/actions/contracts/handle";
 import { TransferExecutionError } from "@/shared/transfers/types";
 import { announceActionFailure } from "@/client/home/action-toast-events";
 
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
-function validPrepared(value: unknown, session: VerifiedAccountSession): value is PreparedMoneyAction {
-  return Boolean(
-    isRecord(value) && typeof value.id === "string" &&
-    isRecord(value.owner) && session.smartAccount &&
-    value.owner.subject === session.user.subject &&
-    typeof value.owner.address === "string" &&
-    value.owner.address.toLowerCase() === session.smartAccount.address.toLowerCase() &&
-    value.owner.accountProvider === session.accountProvider &&
-    Array.isArray(value.calls) && Array.isArray(value.amounts) && Array.isArray(value.warnings),
-  );
-}
-
 export function useMoneyActionExecution({
   session,
   status,
+  verification,
   ownerKey,
   ownerFence,
   sdkSendUserOperation,
@@ -40,6 +33,7 @@ export function useMoneyActionExecution({
 }: {
   session: VerifiedAccountSession | null;
   status: AccountSessionStatus;
+  verification: "provisional" | "server" | null;
   ownerKey: string | null;
   ownerFence: OwnerGenerationFence;
   sdkSendUserOperation: AccountWalletSdkBoundary["sendUserOperation"];
@@ -54,11 +48,11 @@ export function useMoneyActionExecution({
   const { fetchAccountResource } = transport;
 
   const assertReady = useCallback(() => {
-    if (!session?.smartAccount || !ownerKey || status !== "verified") {
+    if (!session?.smartAccount || !ownerKey || status !== "verified" || verification !== "server") {
       throw new TransferExecutionError("stale-session");
     }
     return session;
-  }, [ownerKey, session, status]);
+  }, [ownerKey, session, status, verification]);
 
   const prepareMoneyAction = useCallback(async (kind: string, params: unknown) => {
     const active = assertReady();
@@ -81,36 +75,8 @@ export function useMoneyActionExecution({
     ownerFence.assertCurrent(generation);
     const value = await fetchAccountResource(`/api/actions/${id}`);
     ownerFence.assertCurrent(generation);
-    if (
-      !isRecord(value) ||
-      value.id !== id ||
-      value.kind !== "send" ||
-      !isRecord(value.summary) ||
-      typeof value.summary.title !== "string" ||
-      !Array.isArray(value.summary.amounts) ||
-      !Array.isArray(value.summary.warnings) ||
-      !Array.isArray(value.calls) ||
-      typeof value.expiresAt !== "string" ||
-      !active.smartAccount
-    ) {
-      throw new TransferExecutionError("unavailable");
-    }
-    const resumed: PreparedMoneyAction = {
-      id,
-      owner: {
-        subject: active.user.subject,
-        address: active.smartAccount.address,
-        chainId: active.smartAccount.chainId,
-        accountProvider: active.accountProvider,
-      },
-      kind: value.kind,
-      title: value.summary.title,
-      calls: value.calls as PreparedMoneyAction["calls"],
-      amounts: value.summary.amounts as PreparedMoneyAction["amounts"],
-      warnings: value.summary.warnings as string[],
-      expiresAt: value.expiresAt,
-      createdAt: new Date().toISOString(),
-    };
+    const resumed = parsePendingActionResponse(value, id, active);
+    if (!resumed) throw new TransferExecutionError("unavailable");
     preparedGeneration.current.set(id, generation);
     return resumed;
   }, [assertReady, fetchAccountResource, ownerFence]);
@@ -118,7 +84,7 @@ export function useMoneyActionExecution({
   const postHandle = useCallback(async (
     id: string,
     generation: number,
-    body: { providerHandle?: string; transactionHash?: string },
+    body: HandleActionRequest,
   ) => {
     ownerFence.assertCurrent(generation);
     await fetchAccountResource(`/api/actions/${id}/handle`, { method: "POST", body });
@@ -183,8 +149,10 @@ export function useMoneyActionExecution({
         confirmedPlans: confirmedPlans.current,
         providerDispatches: providerDispatches.current,
         confirm: async () => {
-          const response = await fetchAccountResource(`/api/actions/${action.id}/confirm`, { method: "POST", body: {} });
-          if (!isRecord(response) || !Array.isArray(response.calls)) throw new TransferExecutionError("unavailable");
+          const response = parseConfirmActionResponse(
+            await fetchAccountResource(`/api/actions/${action.id}/confirm`, { method: "POST", body: {} }),
+          );
+          if (!response) throw new TransferExecutionError("unavailable");
           return { calls: response.calls as ConfirmedPlan["calls"] };
         },
         dispatch: async (plan) => {

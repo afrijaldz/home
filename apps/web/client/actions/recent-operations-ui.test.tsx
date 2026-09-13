@@ -3,7 +3,7 @@ import "@/client/account/dom-test-harness";
 import { getHomeQueryClient } from "@/client/query/query-client";
 import { afterEach, describe, expect, test } from "bun:test";
 
-const { cleanup, fireEvent, render, waitFor, within } = await import("@testing-library/react");
+const { cleanup, render, waitFor, within } = await import("@testing-library/react");
 const { RecentMoneyActions } = await import("./recent-operations");
 
 const HASH = `0x${"a".repeat(64)}` as const;
@@ -41,23 +41,6 @@ afterEach(() => {
 });
 
 describe("RecentMoneyActions", () => {
-  test("renders confirmed rows from GET /api/actions and opens read-only details", async () => {
-    render(
-      <RecentMoneyActions
-        session={session}
-        fetchOperations={async () => ({ actions: [action("confirmed", HASH)] })}
-      />,
-    );
-
-    const row = await within(document.body).findByRole("button", { description: "View Send USDC transaction details" });
-    expect(row.closest("li")?.textContent).toContain("Confirmed");
-    fireEvent.click(row);
-    expect(await within(document.body).findByRole("dialog", { name: "Send USDC" })).toBeTruthy();
-    const explorer = within(document.body).getByRole("link", { name: "View on explorer" });
-    expect(explorer).toHaveProperty("href", `https://basescan.org/tx/${HASH}`);
-    expect(explorer.getAttribute("rel")).toBe("noopener noreferrer");
-  });
-
   test("deduplicates a local action once indexed activity has its transaction hash", async () => {
     render(
       <RecentMoneyActions

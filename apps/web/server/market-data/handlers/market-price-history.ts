@@ -10,7 +10,7 @@ import {
   resolveMarketPriceAssetIdentity,
   type MarketPriceHistoryResponse,
   type MarketPriceRange,
-} from "@/shared/invest/history-contract";
+} from "@/shared/invest/contracts/market-price-history";
 import { getCodexTrendingMemeAdmission } from "@/server/market-data/codex/trending";
 
 type HistoryReader = (
@@ -105,7 +105,7 @@ export function createMarketPriceHistoryHandler(
         headers: { "Cache-Control": cacheControl },
       });
     } catch {
-      return Response.json(createErrorMarketHistoryResponse(identity.assetId, range), {
+      return Response.json(createErrorMarketHistoryResponse(identity.assetId, range) satisfies MarketPriceHistoryResponse, {
         status: 502,
         headers: { "Cache-Control": "no-store" },
       });

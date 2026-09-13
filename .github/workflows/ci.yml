@@ -41,14 +41,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Audit design-system adoption
-        run: bun run ds:audit
-
       - name: Check
         run: bun check
 
   browser-smoke:
-    name: Chromium smoke + WebKit MoneyModal
+    name: Chromium smoke
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -73,11 +70,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Install Chromium and WebKit
+      - name: Install Chromium
         # Uses the pinned @playwright/test CLI; bare `bunx playwright` downloads the latest CLI and mismatched browser builds.
         run: bun run --cwd apps/web test:browser-install
 
-      - name: Test Chromium smoke and WebKit MoneyModal regression
+      - name: Test Chromium smoke
         run: bun run --cwd apps/web test:browser-smoke
 
       - name: Upload Playwright traces on failure

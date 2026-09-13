@@ -1,6 +1,6 @@
 .experience {
   width: 100%;
-  color: var(--fg);
+  color: var(--foreground);
   background: transparent;
 }
 
@@ -25,7 +25,7 @@
 
 .back.back {
   flex: 0 0 auto;
-  color: var(--fg);
+  color: var(--foreground);
 }
 
 .back svg {
@@ -49,7 +49,7 @@
 .shelf {
   display: grid;
   gap: 2px;
-  border: 1px solid var(--separator);
+  border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 2);
   padding: 10px 0.75rem 0.5rem;
 }
@@ -76,7 +76,7 @@
 
 .assetRow {
   min-width: 0;
-  border-bottom: 1px solid var(--separator);
+  border-bottom: 1px solid var(--border);
 }
 
 .assetRow:last-child {
@@ -84,7 +84,7 @@
 }
 
 .change {
-  color: var(--fg-muted);
+  color: var(--muted-foreground);
   font-weight: 600;
 }
 
@@ -169,7 +169,7 @@
   z-index: 3;
   inset: 0;
   pointer-events: none;
-  transition: opacity var(--motion-tab) ease;
+  transition: opacity var(--home-motion-tab) ease;
 }
 
 .plotCover[data-fading="true"] {
@@ -217,7 +217,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--fg-muted);
+  color: var(--muted-foreground);
   font-size: var(--text-metadata);
 }
 

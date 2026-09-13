@@ -26,7 +26,7 @@ const sharedForbiddenPattern = String.raw`^(?:(?:react|react-dom|next)(?:\/|$)|n
 const nodeBuiltins = "assert|async_hooks|buffer|child_process|cluster|crypto|dgram|dns|events|fs|http|http2|https|module|net|os|path|perf_hooks|process|querystring|readline|stream|string_decoder|timers|tls|tty|url|util|v8|vm|worker_threads|zlib".split("|").flatMap((name) => [name, `${name}/*`]);
 
 // Baseline allowlists contain today's production violators. Entries only shrink
-// as files adopt @home/ui; do not add new files to make a lint failure pass.
+// as files adopt owned UI wrappers; do not add new files to make a lint failure pass.
 const rawButtonAllowlist = [
   "client/landing/supported-globe.tsx",
 ];
@@ -397,7 +397,7 @@ const eslintConfig = defineConfig([
         ...literalStyleRestrictions,
         {
           selector: "JSXOpeningElement[name.name='button']",
-          message: "Use Button or IconButton from @home/ui. The raw-button allowlist only shrinks.",
+          message: "Use Button from @/components/ui/button. The raw-button allowlist only shrinks.",
         },
       ],
     },
@@ -416,7 +416,7 @@ const eslintConfig = defineConfig([
         ...literalStyleRestrictions,
         {
           selector: "JSXOpeningElement[name.name=/^(?:input|select)$/]",
-          message: "Use Input or Select from @home/ui. The raw-field allowlist only shrinks.",
+          message: "Use Input or Select from @/components/ui. The raw-field allowlist only shrinks.",
         },
       ],
     },
@@ -435,11 +435,11 @@ const eslintConfig = defineConfig([
         ...literalStyleRestrictions,
         {
           selector: "JSXOpeningElement[name.name='button']",
-          message: "Use Button or IconButton from @home/ui. The raw-button allowlist only shrinks.",
+          message: "Use Button from @/components/ui/button. The raw-button allowlist only shrinks.",
         },
         {
           selector: "JSXOpeningElement[name.name=/^(?:input|select)$/]",
-          message: "Use Input or Select from @home/ui. The raw-field allowlist only shrinks.",
+          message: "Use Input or Select from @/components/ui. The raw-field allowlist only shrinks.",
         },
       ],
     },
@@ -465,7 +465,7 @@ const eslintConfig = defineConfig([
         ...literalStyleRestrictions,
         {
           selector: "JSXOpeningElement[name.name='button']",
-          message: "Use Button or IconButton from @home/ui. The raw-button allowlist only shrinks.",
+          message: "Use Button from @/components/ui/button. The raw-button allowlist only shrinks.",
         },
       ],
     },

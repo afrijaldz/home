@@ -13,12 +13,12 @@
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  border-bottom: 1px solid var(--separator);
+  border-bottom: 1px solid var(--border);
   padding: 0 2px 0.5rem 43px;
 }
 
 .locked {
-  border-bottom: 1px solid var(--separator);
+  border-bottom: 1px solid var(--border);
   padding: 0 2px 9px 43px;
   text-align: right;
 }

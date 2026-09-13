@@ -42,7 +42,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--panel-radius);
+  border-radius: var(--radius-xl);
   list-style: none;
 }
 .vaultRow { border: 0; }
@@ -55,7 +55,7 @@
   overflow-y: clip;
   padding: 12px 16px 14px;
   interpolate-size: allow-keywords;
-  animation: details-open var(--motion-tab) ease;
+  animation: details-open var(--home-motion-tab) ease;
 }
 
 @keyframes details-open {
@@ -95,7 +95,7 @@
   align-items: center;
   gap: 12px;
   border: 1px solid var(--border);
-  border-radius: var(--panel-radius);
+  border-radius: var(--radius-xl);
   background: var(--background);
   padding: 14px 16px;
 }

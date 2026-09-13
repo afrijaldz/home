@@ -36,7 +36,7 @@ import {
   minimumCollateralForDebt,
   toAssetsUp,
 } from "./math";
-import type { BorrowMarketSnapshot } from "@/shared/borrowing/types";
+import type { BorrowMarketSnapshot } from "@/shared/borrowing/contract";
 import {
   createBaseRpcClient,
   parseRpcQuantity,

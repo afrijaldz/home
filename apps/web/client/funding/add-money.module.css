@@ -15,7 +15,7 @@
   height: 32px;
   place-items: center;
   border-radius: 50%;
-  background: var(--home-canvas);
+  background: var(--muted);
   color: var(--foreground);
 }
 
@@ -34,7 +34,7 @@
   aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--panel-radius);
+  border-radius: var(--radius-xl);
   background: var(--background);
 }
 
@@ -80,8 +80,8 @@
   display: block;
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: var(--control-radius);
-  background: var(--home-canvas);
+  border-radius: var(--radius);
+  background: var(--muted);
   color: var(--foreground);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 0.72rem;

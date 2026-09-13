@@ -12,14 +12,13 @@ Start with [Home is thin](home-is-thin.md) for the current action and client con
 | [Build status](build-status.md) | Local-app scope and validation boundary. |
 | [Checkpoint 2026-09-12](checkpoint-2026-09-12.md) | State of main after the Home-is-thin reset; decisions, open items, how to resume. |
 | [Architecture audit 2026-09-12](architecture-audit-2026-09-12.md) | Post-reset audit of server, funding seam, and client; ranked cleanup lanes and decisions. |
-| [Design-system audit 2026-09-12](design-system-audit-2026-09-12.md) | Primitive gaps, token strategy, guardrails, and surface-by-surface adoption lanes. |
 | [CDP error reporting](cdp-error-reporting.md) | Default CDP error-reporting policy. |
 | [CDP setup](cdp-setup.md) | CDP project, sessions, and allowed origins. |
 | [CDP SQL](cdp-sql.md) | Indexed Base-history adapter notes. |
 | [Codex prices](codex-prices.md) | Server-side Invest price integration. |
 | [Currency defaults](currency-defaults.md) | Default asset choices by currency. |
 | [Delivery gates](delivery-gates.md) | Repository and deployment gate boundary. |
-| [Design system](design-system.md) | Locked shadcn-on-Base-UI direction and outgoing `@home/ui` guidance. |
+| [UI system](design-system.md) | Owned shadcn components, Home theme tokens, lint rules, and testing stance. |
 | [Docs index](README.md) | This complete documentation index. |
 | [Fork and extend](fork-and-extend.md) | Operator customization and hosting guide. |
 | [Funding provider seam](funding-provider-seam.md) | Funding adapter contract and design history. |

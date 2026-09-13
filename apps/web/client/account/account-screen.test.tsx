@@ -117,6 +117,45 @@ afterEach(() => {
 });
 
 describe("production account sign-in sheet", () => {
+  test("close cancels an in-flight email request and ignores its late result", async () => {
+    const codeRequest = deferred<{ flowId: string }>();
+    render(<SheetHarness requestEmailCode={() => codeRequest.promise} />);
+    fireEvent.click(page().getByRole("button", { name: "Open account" }));
+    const email = await page().findByRole("textbox", { name: "Email address" });
+    fireEvent.input(email, { target: { value: "fixture@example.test" } });
+    fireEvent.click(page().getByRole("button", { name: "Continue with email" }));
+    fireEvent.click(page().getByRole("button", { name: "Close sign in" }));
+    await waitFor(() => expect(page().queryByRole("dialog", { name: "Sign in to Home" })).toBeNull());
+
+    await act(async () => {
+      codeRequest.resolve({ flowId: "late-flow" });
+      await codeRequest.promise;
+    });
+    fireEvent.click(page().getByRole("button", { name: "Open account" }));
+    await page().findByRole("dialog", { name: "Sign in to Home" });
+    expect(await page().findByRole("textbox", { name: "Email address" })).toBeTruthy();
+    expect(page().queryByRole("textbox", { name: "Verification code" })).toBeNull();
+  });
+
+  test("existing verified session does not auto-close a new email attempt", async () => {
+    render(
+      <SheetHarness
+        requestEmailCode={async () => ({ flowId: "new-email-flow" })}
+        initiallySignedIn
+      />,
+    );
+    await waitFor(() => expect(page().getByTestId("session-status").textContent).toBe("verified"));
+    fireEvent.click(page().getByRole("button", { name: "Open account" }));
+    await page().findByRole("dialog", { name: "Sign in to Home" });
+
+    fireEvent.input(page().getByRole("textbox", { name: "Email address" }), {
+      target: { value: "new@example.test" },
+    });
+    fireEvent.click(page().getByRole("button", { name: "Continue with email" }));
+    expect(await page().findByRole("textbox", { name: "Verification code" })).toBeTruthy();
+    expect(page().getByRole("dialog", { name: "Check your email" })).toBeTruthy();
+  });
+
   test("blocks the real sign-in sheet while missing-connection cleanup is deferred", async () => {
     window.sessionStorage.setItem("home:account-provider", "base-account");
     const cleanupRequest = deferred<void>();

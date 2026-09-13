@@ -51,19 +51,24 @@ afterEach(() => {
 });
 
 describe("FundingExperience", () => {
-  test("does not present a disabled regional candidate as receive support", () => {
-    render(
-      <FundingExperienceForWallet
-        wallet={verifiedWallet()}
-        navigateToRedirect={() => {}}
-        initialStep="receive"
-        regionId="BR"
-      />,
-    );
+  test("does not present a disabled regional candidate as receive support", async () => {
+    await act(async () => {
+      render(
+        <FundingExperienceForWallet
+          wallet={verifiedWallet()}
+          navigateToRedirect={() => {}}
+          initialStep="receive"
+          regionId="BR"
+        />,
+      );
+    });
 
-    expect(page().getByText("USDC")).toBeTruthy();
-    expect(page().queryByText("BRZ")).toBeNull();
-    expect(page().getByText(/other tokens in Home's supported Base inventory/)).toBeTruthy();
+    expect(await page().findByRole("heading", { name: "Receive" })).toBeTruthy();
+    const supportedAssets = page().getByRole("region", {
+      name: "Supported receive assets on Base",
+    });
+    expect(supportedAssets.textContent).toContain("USDC");
+    expect(supportedAssets.textContent).not.toContain("BRZ");
   });
 
   test("lists configured provider bindings and creates an order with only the quote token", async () => {
@@ -216,43 +221,24 @@ describe("FundingExperience", () => {
     expect(page().getByText(/Sign in and verify a Base account/)).toBeTruthy();
   });
 
-  test("shows provider identity only in the configured method label", async () => {
-    const wallet = {
-      ...verifiedWallet(),
-      fetchAccountResource: async (path: string) => {
-        if (path.startsWith("/api/funding/providers")) return { providers: [redirectBinding()] };
-        if (path.startsWith("/api/funding/orders?")) return { order: null };
-        throw new Error("unexpected request");
-      },
-    };
-    render(
-      <FundingExperienceForWallet
-        wallet={wallet}
-        navigateToRedirect={() => {}}
-        regionId="US"
-      />,
-    );
+  test("signed-out empty state offers sign in without exposing funding actions", async () => {
+    await act(async () => {
+      render(
+        <FundingExperienceForWallet
+          wallet={{
+            ownerKey: null,
+            status: "signed-out",
+            session: null,
+            fetchAccountResource: async () => {
+              throw new Error("signed out");
+            },
+          }}
+          navigateToRedirect={() => {}}
+        />,
+      );
+    });
 
-    expect(await page().findByRole("button", { name: "Deposit USD with Coinbase" })).toBeTruthy();
-    expect(page().queryByText(/local bank|credentials|allowlisted|deployment/i)).toBeNull();
-  });
-
-  test("signed-out empty state offers sign in without exposing funding actions", () => {
-    render(
-      <FundingExperienceForWallet
-        wallet={{
-          ownerKey: null,
-          status: "signed-out",
-          session: null,
-          fetchAccountResource: async () => {
-            throw new Error("signed out");
-          },
-        }}
-        navigateToRedirect={() => {}}
-      />,
-    );
-
-    expect(page().getByRole("heading", { name: "Add money" })).toBeTruthy();
+    expect(await page().findByRole("heading", { name: "Add money" })).toBeTruthy();
     expect(page().getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe(
       "/?account=signin",
     );

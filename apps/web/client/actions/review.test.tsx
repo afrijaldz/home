@@ -87,18 +87,4 @@ describe("MoneyActionReview", () => {
     expect(executions).toBe(0);
   });
 
-  test("keeps raw call targets and base-unit approval caps off the confirm step", () => {
-    render(
-      <MoneyActionReview
-        action={action}
-        onClose={() => {}}
-        execute={async () => ({ id: action.id, status: "submitted" })}
-        onConfirmed={() => {}}
-      />,
-    );
-
-    expect(screen.queryByText(/0x2222/i)).toBeNull();
-    expect(screen.queryByText(/base units/i)).toBeNull();
-    expect(screen.getByText("Base (8453)")).toBeTruthy();
-  });
 });

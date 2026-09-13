@@ -84,6 +84,7 @@ function responseErrorDetails(payload: unknown): {
 export function useAuthenticatedTransport({
   session,
   status,
+  verification,
   ownerKey,
   ownerFence,
   getAccessToken,
@@ -92,6 +93,7 @@ export function useAuthenticatedTransport({
 }: {
   session: VerifiedAccountSession | null;
   status: AccountSessionStatus;
+  verification: "provisional" | "server" | null;
   ownerKey: string | null;
   ownerFence: OwnerGenerationFence;
   getAccessToken: () => Promise<string | null>;
@@ -116,7 +118,7 @@ export function useAuthenticatedTransport({
       signal?: AbortSignal,
       query?: string,
     ): Promise<unknown> => {
-      if (!session || status !== "verified" || !ownerKey) {
+      if (!session || status !== "verified" || verification !== "server" || !ownerKey) {
         throw new Error("Authenticated resource is unavailable.");
       }
       const accessToken = await getAccessToken();
@@ -164,7 +166,7 @@ export function useAuthenticatedTransport({
         throw new Error("Authenticated resource is unavailable.");
       }
     },
-    [authentication, getAccessToken, ownerKey, session, sessionFetch, status],
+    [authentication, getAccessToken, ownerKey, session, sessionFetch, status, verification],
   );
 
   const startActionBalanceFreshness = useCallback((actionId: string) => startBalanceFreshness({
@@ -178,7 +180,7 @@ export function useAuthenticatedTransport({
   const fetchAccountResource = useCallback(
     async (path: string, options: AccountResourceOptions = {}): Promise<unknown> => {
       const safePath = normalizeAccountResourcePath(path);
-      if (!session?.smartAccount || status !== "verified" || !ownerKey) {
+      if (!session?.smartAccount || status !== "verified" || verification !== "server" || !ownerKey) {
         throw new TransferExecutionError("stale-session");
       }
       const identity = ownerFence.capture();
@@ -252,7 +254,7 @@ export function useAuthenticatedTransport({
         throw new TransferExecutionError("unavailable", error);
       }
     },
-    [authentication, getAccessToken, ownerFence, ownerKey, queryClient, session, sessionFetch, startActionBalanceFreshness, status],
+    [authentication, getAccessToken, ownerFence, ownerKey, queryClient, session, sessionFetch, startActionBalanceFreshness, status, verification],
   );
 
   const fetchMoneyActionApi = useCallback<MoneyActionApiFetch>(

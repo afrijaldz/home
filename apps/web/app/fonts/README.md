@@ -3,9 +3,8 @@
 Home ships these files locally under the SIL Open Font License 1.1.
 
 - `dm-sans.woff2` is the unmodified DM Sans variable normal face from `googlefonts/dm-fonts` commit `d0520ba03bd780f5dccb3024854463d44f699b78` (`Sans/fonts/webfonts/DMSans[opsz,wght].woff2`).
-- `dm-mono-medium.woff2` is DM Mono Medium from `googlefonts/dm-mono` commit `57fadabfb200a77de2812540026c249dc3013077` (`exports/DMMono-Medium.ttf`), converted without subsetting by:
-  `bunx wawoff2 packages/ui/fonts/dm-mono-medium.ttf apps/web/app/fonts/dm-mono-medium.woff2`
-- `OFL.txt` and `DM-Mono-OFL.txt` are the corresponding license files copied from `packages/ui/fonts/`.
+- `dm-mono-medium.woff2` is DM Mono Medium from `googlefonts/dm-mono` commit `57fadabfb200a77de2812540026c249dc3013077` (`exports/DMMono-Medium.ttf`), converted without subsetting with `wawoff2`.
+- `OFL.txt` and `DM-Mono-OFL.txt` are the corresponding upstream license files.
 
 SHA-256 of shipped files:
 
