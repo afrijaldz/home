@@ -70,6 +70,23 @@ describe("CDP balance activity webhook", () => {
     expect((await store.get(8453, ADDRESS))?.staleAt).toBe(NOW.toISOString());
   });
 
+  test("accepts any valid v1 value and uppercase signed header names", async () => {
+    const store = await seededStore();
+    const raw = body({ eventType: "wallet.activity.multi", data: { address: ADDRESS } });
+    const timestamp = Math.floor(NOW.getTime() / 1000);
+    const headers = new Headers({ "Content-Type": "application/json" });
+    const headerNames = "Content-Type";
+    const digest = createHmac("sha256", SECRET)
+      .update(Buffer.concat([
+        Buffer.from(`${timestamp}.${headerNames}.application/json.`),
+        Buffer.from(raw),
+      ]))
+      .digest("hex");
+    const signature = `t=${timestamp},h=${headerNames},v1=${"0".repeat(64)},v1=${digest}`;
+    const handler = createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW });
+    expect((await handler(raw, signature, headers)).status).toBe(200);
+  });
+
   test("rejects when no stored subscription secret exists", async () => {
     const store = await seededStore();
     const raw = body({ eventType: "wallet.activity.multi", data: { address: ADDRESS } });

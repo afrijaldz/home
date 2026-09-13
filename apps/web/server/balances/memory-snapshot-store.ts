@@ -28,13 +28,19 @@ export class MemoryBalanceSnapshotStore implements BalanceSnapshotStore {
   }
 
   async markStale(chainId: number, address: `0x${string}`, at: Date): Promise<void> {
-    const rowKey = key(chainId, address);
-    const existing = this.rows.get(rowKey);
-    if (!existing) return;
-    const staleAt = existing.staleAt && Date.parse(existing.staleAt) > at.getTime()
-      ? existing.staleAt
-      : at.toISOString();
-    this.rows.set(rowKey, { ...existing, staleAt });
+    await this.markStaleMany(chainId, [address], at);
+  }
+
+  async markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void> {
+    for (const address of addresses) {
+      const rowKey = key(chainId, address);
+      const existing = this.rows.get(rowKey);
+      if (!existing) continue;
+      const staleAt = existing.staleAt && Date.parse(existing.staleAt) > at.getTime()
+        ? existing.staleAt
+        : at.toISOString();
+      this.rows.set(rowKey, { ...existing, staleAt });
+    }
   }
 
   async markHot(chainId: number, address: `0x${string}`, until: Date): Promise<void> {

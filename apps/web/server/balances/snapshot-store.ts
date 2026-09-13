@@ -26,6 +26,7 @@ export interface BalanceSnapshotStore {
   putObservation(row: BalanceObservation): Promise<boolean>;
   /** Signals intentionally no-op before the first observation exists. */
   markStale(chainId: number, address: `0x${string}`, at: Date): Promise<void>;
+  markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void>;
   /** Signals intentionally no-op before the first observation exists. */
   markHot(chainId: number, address: `0x${string}`, until: Date): Promise<void>;
 }
@@ -64,9 +65,14 @@ export class PostgresBalanceSnapshotStore implements BalanceSnapshotStore {
   }
 
   async markStale(chainId: number, address: `0x${string}`, at: Date): Promise<void> {
+    await this.markStaleMany(chainId, [address], at);
+  }
+
+  async markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void> {
+    if (addresses.length === 0) return;
     await this.sql.query(
-      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address=$2",
-      [chainId, address.toLowerCase(), at.toISOString()],
+      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address = ANY($2)",
+      [chainId, addresses.map((address) => address.toLowerCase()), at.toISOString()],
     );
   }
 

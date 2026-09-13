@@ -162,11 +162,6 @@ export function getCodexTokenLookup(
   return sharedLookup(addresses);
 }
 
-export function clearCodexTokenLookupCacheForTests(): void {
-  sharedLookup = null;
-  sharedApiKey = undefined;
-}
-
 async function fetchTokenBatch({
   apiKey,
   addresses,

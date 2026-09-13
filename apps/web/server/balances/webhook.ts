@@ -12,7 +12,7 @@ const ADDRESS_FIELDS = new Set(["address", "matchedAddress", "from", "to", "tran
 const ACTIVITY_EVENTS = new Set(["wallet.activity.detected", "wallet.activity.multi", "wallet.activity"]);
 
 export function createCdpWebhookHandler(dependencies: {
-  store: Pick<BalanceSnapshotStore, "markStale">;
+  store: Pick<BalanceSnapshotStore, "markStaleMany">;
   subscriptions: Pick<WebhookSubscriptionStore, "list">;
   now?: () => Date;
 }) {
@@ -61,7 +61,7 @@ export function createCdpWebhookHandler(dependencies: {
     }
 
     const addresses = extractCdpActivityAddresses(payload);
-    await Promise.all(addresses.map((address) => dependencies.store.markStale(8453, address, current)));
+    await dependencies.store.markStaleMany(8453, addresses, current);
     observe("accepted", "WEBHOOK_ACCEPTED", startedAt);
     return Response.json({ accepted: true }, { status: 200 });
   };
@@ -75,11 +75,9 @@ export function verifyCdpWebhookSignature(raw: Uint8Array, header: string | null
   const body = Buffer.from(raw);
   const candidates: Array<{ signature: string; payload: Uint8Array }> = [];
   if (parsed.v0) candidates.push({ signature: parsed.v0, payload: Buffer.concat([Buffer.from(`${parsed.timestamp}.`, "utf8"), body]) });
-  if (parsed.v1 && parsed.headerNames) {
-    candidates.push({
-      signature: parsed.v1,
-      payload: Buffer.concat([Buffer.from(`${parsed.timestamp}.${parsed.headerNames}.${parsed.headerNames.split(" ").map((name) => headers.get(name) ?? "").join(".")}.`, "utf8"), body]),
-    });
+  if (parsed.v1.length > 0 && parsed.headerNames) {
+    const payload = Buffer.concat([Buffer.from(`${parsed.timestamp}.${parsed.headerNames}.${parsed.headerNames.split(" ").map((name) => headers.get(name) ?? "").join(".")}.`, "utf8"), body]);
+    for (const signature of parsed.v1) candidates.push({ signature, payload });
   }
   return candidates.some(({ signature, payload }) => {
     if (!/^[0-9a-fA-F]{64}$/.test(signature)) return false;
@@ -95,21 +93,21 @@ export function extractCdpActivityAddresses(payload: Record<string, unknown>): `
   return [...addresses];
 }
 
-function parseSignatureHeader(header: string | null): { timestamp: number; headerNames: string | null; v0: string | null; v1: string | null } | null {
+function parseSignatureHeader(header: string | null): { timestamp: number; headerNames: string | null; v0: string | null; v1: string[] } | null {
   if (!header) return null;
   let timestamp: number | null = null;
   let headerNames: string | null = null;
   let v0: string | null = null;
-  let v1: string | null = null;
+  const v1: string[] = [];
   for (const part of header.split(",")) {
     const [rawKey, ...rest] = part.trim().split("=");
     const value = rest.join("=").trim();
     if (rawKey === "t" && /^\d{1,16}$/.test(value)) timestamp = Number(value);
-    if (rawKey === "h" && /^[a-z0-9-]+(?: [a-z0-9-]+)*$/.test(value)) headerNames = value;
+    if (rawKey === "h" && /^[A-Za-z0-9-]+(?: [A-Za-z0-9-]+)*$/.test(value)) headerNames = value;
     if (rawKey === "v0" && value) v0 = value;
-    if (rawKey === "v1" && value) v1 = value;
+    if (rawKey === "v1" && value) v1.push(value);
   }
-  return timestamp !== null && Number.isSafeInteger(timestamp) && (v0 !== null || v1 !== null) ? { timestamp, headerNames, v0, v1 } : null;
+  return timestamp !== null && Number.isSafeInteger(timestamp) && (v0 !== null || v1.length > 0) ? { timestamp, headerNames, v0, v1 } : null;
 }
 
 function readSubscriptionId(payload: Record<string, unknown>): string | null {

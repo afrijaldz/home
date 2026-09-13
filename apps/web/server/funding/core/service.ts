@@ -8,6 +8,7 @@ import { decimalToAtomic } from "@/shared/formatting/atomic";
 import { createProviderContext } from "./provider-context";
 import { authenticateFundingQuote, isFundingQuoteExpired, signFundingQuote } from "./quote-token";
 import type { FundingOrder, FundingOrderOwner, FundingOrderStore } from "./store";
+import { fireAndForgetBalanceSignal } from "@/server/balances/signal";
 
 export type ReceiptMatch = { transactionHash: `0x${string}`; logIndex: number } | null;
 
@@ -263,11 +264,3 @@ function validKycFields(fields: Record<string, string>, definitions: ReadonlyArr
   return expected.length === supplied.length && expected.every((name, index) => name === supplied[index] && fields[name].trim().length > 0);
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function fireAndForgetBalanceSignal(run: () => Promise<void> | undefined): void {
-  try {
-    const pending = run();
-    if (pending) void pending.catch(() => console.error("Balance invalidation signal failed."));
-  } catch {
-    console.error("Balance invalidation signal failed.");
-  }
-}

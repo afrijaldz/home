@@ -65,6 +65,17 @@ export function balanceSnapshotStoreContract(options: {
       });
     });
 
+    test("marks multiple addresses stale in one store operation", async () => {
+      await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
+      await store.putObservation({
+        ...observation("10", "2026-09-13T12:00:10.000Z"),
+        address: OTHER,
+      });
+      await store.markStaleMany(8453, [ADDRESS, OTHER], new Date("2026-09-13T12:00:20.000Z"));
+      expect((await store.get(8453, ADDRESS))?.staleAt).toBe("2026-09-13T12:00:20.000Z");
+      expect((await store.get(8453, OTHER))?.staleAt).toBe("2026-09-13T12:00:20.000Z");
+    });
+
     test("signals no-op when no observation row exists", async () => {
       await store.markStale(8453, OTHER, new Date("2026-09-13T12:00:20.000Z"));
       await store.markHot(8453, OTHER, new Date("2026-09-13T12:01:20.000Z"));
