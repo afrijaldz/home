@@ -26,6 +26,7 @@ const registryRead: BalancesRead = {
     hash: `0x${"1".repeat(64)}`,
     timestamp: "1",
   },
+  observedAt: "2026-09-13T12:00:00.000Z",
   holdings: [{
     key: `eip155:8453/erc20:${registryAddress}`,
     id: "registry-token",
@@ -269,7 +270,6 @@ describe("balances resolution", () => {
       region: "US",
       read: withoutIcons,
       holdings,
-      now: () => new Date("2026-09-13T12:00:00.000Z"),
     });
 
     expect(parseBalancesSnapshot(snapshot, {
@@ -287,6 +287,7 @@ function fullRegistryRead(): BalancesRead {
       hash: `0x${"1".repeat(64)}`,
       timestamp: "1",
     },
+    observedAt: "2026-09-13T12:00:00.000Z",
     holdings: registryEntries().map((entry): ReadHolding => ({
       ...entry,
       balance: { status: "ready", baseUnits: "0" },

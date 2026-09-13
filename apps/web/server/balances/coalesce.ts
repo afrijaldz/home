@@ -2,12 +2,21 @@ import "server-only";
 
 import type { PortfolioAddress } from "@/config/portfolio-assets";
 import type { RegionId } from "@/config/regions";
-import type { BalancesSnapshot, Holding } from "@/shared/balances/types";
+import {
+  BALANCES_CHAIN_ID,
+  type BalancesSnapshot,
+  type Holding,
+} from "@/shared/balances/types";
 import { enumerateBalances as defaultEnumerateBalances } from "./enumerate";
 import { priceBalances as defaultPriceBalances } from "./price";
 import { readBalances as defaultReadBalances } from "./read";
 import { resolveBalances as defaultResolveBalances } from "./resolve";
 import { assembleBalancesSnapshot } from "./snapshot";
+import {
+  getBalanceSnapshotStore,
+  type BalanceSnapshotRow,
+  type BalanceSnapshotStore,
+} from "./snapshot-store";
 import type {
   BalancesEnumeration,
   BalancesRead,
@@ -15,10 +24,10 @@ import type {
 } from "./types";
 import { getBalancesUniverse } from "./universe";
 
-export const BALANCES_READ_TTL_MS = 2_000;
-export const BALANCES_OWNER_CACHE_MAX = 256;
+export const BALANCES_BACKSTOP_MS = 120_000;
 
 type Dependencies = {
+  store?: BalanceSnapshotStore;
   readUniverse?: () => Promise<BalancesUniverse>;
   enumerateBalances?: (
     owner: PortfolioAddress,
@@ -35,64 +44,93 @@ type Dependencies = {
   ) => Promise<BalancesRead>;
   priceBalances?: (read: BalancesRead, region: RegionId) => Promise<Holding[]>;
   now?: () => Date;
-  ttlMs?: number;
-  maxOwners?: number;
+  backstopMs?: number;
 };
 
-type Entry = {
-  inFlight: Promise<BalancesRead> | null;
-  value: BalancesRead | null;
-  storedAt: number;
-};
+type ObservedResult = { read: BalancesRead; stale: boolean };
 
-/** The 2s pinned registry read cache is separate from the 60s enumeration cache. */
+/** Persistent observation selection with per-instance, per-owner in-flight dedupe. */
 export function createBalancesService(dependencies: Dependencies = {}) {
+  const store = dependencies.store ?? getBalanceSnapshotStore();
   const readUniverse = dependencies.readUniverse ?? getBalancesUniverse;
-  const enumerateBalances = dependencies.enumerateBalances ??
-    defaultEnumerateBalances;
+  const enumerateBalances = dependencies.enumerateBalances ?? defaultEnumerateBalances;
   const readBalances = dependencies.readBalances ?? defaultReadBalances;
   const resolveBalances = dependencies.resolveBalances ?? defaultResolveBalances;
   const priceBalances = dependencies.priceBalances ?? defaultPriceBalances;
   const now = dependencies.now ?? (() => new Date());
-  const ttlMs = dependencies.ttlMs ?? BALANCES_READ_TTL_MS;
-  const maxOwners = dependencies.maxOwners ?? BALANCES_OWNER_CACHE_MAX;
-  const entries = new Map<string, Entry>();
+  const backstopMs = dependencies.backstopMs ?? BALANCES_BACKSTOP_MS;
+  const inFlight = new Map<string, Promise<ObservedResult>>();
 
-  async function getRead(owner: PortfolioAddress): Promise<BalancesRead> {
-    const key = owner.toLowerCase();
-    const current = now().getTime();
-    let entry = entries.get(key);
+  async function getObserved(owner: PortfolioAddress): Promise<ObservedResult> {
+    const address = owner.toLowerCase() as PortfolioAddress;
+    const existing = inFlight.get(address);
+    if (existing) return existing;
+    const pending = selectObservation(address).finally(() => {
+      if (inFlight.get(address) === pending) inFlight.delete(address);
+    });
+    inFlight.set(address, pending);
+    return pending;
+  }
 
-    if (entry) {
-      entries.delete(key);
-      entries.set(key, entry);
-      if (entry.value && current - entry.storedAt <= ttlMs) {
-        return entry.value;
-      }
-      if (entry.inFlight) return entry.inFlight;
-    } else {
-      entry = { inFlight: null, value: null, storedAt: 0 };
-      entries.set(key, entry);
-      evict(entries, maxOwners);
+  async function selectObservation(owner: PortfolioAddress): Promise<ObservedResult> {
+    const row = await store.get(BALANCES_CHAIN_ID, owner);
+    const current = now();
+    const hot = Boolean(row?.hotUntil) && Date.parse(row!.hotUntil!) > current.getTime();
+    const signaled = Boolean(row?.staleAt) &&
+      Date.parse(row!.staleAt!) > Date.parse(row!.observedAt);
+    const expired = row !== null &&
+      current.getTime() - Date.parse(row.observedAt) > backstopMs;
+
+    if (row && !hot && !signaled && !expired) {
+      return { read: readFromRow(row), stale: false };
     }
-
-    const target = entry;
-    target.inFlight = (async () => {
-      const universe = await readUniverse();
-      return readBalances(universe, owner);
-    })();
 
     try {
-      const value = await target.inFlight;
-      target.value = value;
-      target.storedAt = now().getTime();
-      return value;
+      const observed = hot && row
+        ? await observeRegistryOnly(owner, row)
+        : await observeFull(owner);
+      const wrote = await store.putObservation(observationFromRead(owner, observed));
+      if (!wrote) {
+        const winner = await store.get(BALANCES_CHAIN_ID, owner);
+        if (winner) return { read: readFromRow(winner), stale: false };
+      }
+      return { read: observed, stale: false };
     } catch (error) {
-      entries.delete(key);
-      throw error;
-    } finally {
-      target.inFlight = null;
+      if (!row) throw error;
+      return { read: readFromRow(row), stale: true };
     }
+  }
+
+  async function observeFull(owner: PortfolioAddress): Promise<BalancesRead> {
+    const universe = await readUniverse();
+    const [registryRead, enumeration] = await Promise.all([
+      readBalances(universe, owner),
+      enumerateBalances(owner),
+    ]);
+    return resolveBalances(registryRead, enumeration);
+  }
+
+  async function observeRegistryOnly(
+    owner: PortfolioAddress,
+    row: BalanceSnapshotRow,
+  ): Promise<BalancesRead> {
+    const universe = await readUniverse();
+    const registryRead = await readBalances(universe, owner);
+    const withEnrichment = await resolveBalances(registryRead, {
+      status: "unavailable",
+      rows: [],
+    });
+    return {
+      ...withEnrichment,
+      holdings: [
+        ...withEnrichment.holdings.filter((holding) => holding.source === "registry"),
+        ...row.holdings.filter((holding) => holding.source !== "registry"),
+      ],
+      coverage: {
+        registry: withEnrichment.coverage.registry,
+        catalog: row.coverage.catalog,
+      },
+    };
   }
 
   return async function getBalancesSnapshot(
@@ -101,28 +139,45 @@ export function createBalancesService(dependencies: Dependencies = {}) {
     signal?: AbortSignal,
   ): Promise<BalancesSnapshot> {
     void signal;
-    const [registryRead, enumeration] = await Promise.all([
-      getRead(owner),
-      enumerateBalances(owner),
-    ]);
-    const read = await resolveBalances(registryRead, enumeration);
-    const holdings = await priceBalances(read, region);
+    const observed = await getObserved(owner);
+    const holdings = await priceBalances(observed.read, region);
     return assembleBalancesSnapshot({
       owner,
       region,
-      read,
+      read: observed.read,
       holdings,
-      now,
+      stale: observed.stale,
     });
   };
 }
 
 export const getBalancesSnapshot = createBalancesService();
 
-function evict(entries: Map<string, Entry>, maximum: number): void {
-  while (entries.size > maximum) {
-    const oldest = entries.keys().next().value;
-    if (oldest === undefined) return;
-    entries.delete(oldest);
-  }
+function observationFromRead(
+  owner: PortfolioAddress,
+  read: BalancesRead,
+) {
+  return {
+    chainId: BALANCES_CHAIN_ID,
+    address: owner.toLowerCase() as `0x${string}`,
+    blockNumber: read.block.number,
+    blockHash: read.block.hash,
+    blockTimestamp: read.block.timestamp,
+    observedAt: read.observedAt,
+    holdings: read.holdings,
+    coverage: read.coverage,
+  };
+}
+
+function readFromRow(row: BalanceSnapshotRow): BalancesRead {
+  return {
+    block: {
+      number: row.blockNumber,
+      hash: row.blockHash,
+      timestamp: row.blockTimestamp,
+    },
+    observedAt: row.observedAt,
+    holdings: row.holdings,
+    coverage: row.coverage,
+  };
 }
