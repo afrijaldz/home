@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ActionRow } from "./store";
-import { createConfirmActionHandler, createGetActionHandler, createListActionsHandler } from "./handler";
+import { createConfirmActionHandler, createGetActionHandler, createHandleActionHandler, createListActionsHandler } from "./handler";
 import { setObservabilityLogWriterForTests } from "@/server/observability/log";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -117,6 +117,61 @@ describe("actions HTTP handlers", () => {
     expect(response.status).toBe(200);
     expect(confirmedCalls).toEqual([CALL]);
     expect((await response.json()).calls).toEqual([CALL]);
+  });
+
+  test("confirm marks the owner balance hot exactly once only after success", async () => {
+    const signals: Array<{ address: string; until: string }> = [];
+    const handler = createConfirmActionHandler({
+      authorize: authorize(),
+      now: () => new Date("2026-09-12T12:05:00.000Z"),
+      markHot: async (address, until) => { signals.push({ address, until: until.toISOString() }); },
+      store: {
+        get: async () => row,
+        confirm: async (_owner, _id, calls) => ({ ...row, confirmed_at: "2026-09-12T12:05:00.000Z", pending: { calls: calls ?? [] } }),
+      },
+    });
+    expect((await handler(request(`/api/actions/${ID}/confirm`, { method: "POST", body: "{}" }), context())).status).toBe(200);
+    await Promise.resolve();
+    expect(signals).toEqual([{ address: ADDRESS, until: "2026-09-12T12:06:00.000Z" }]);
+
+    const failedSignals: string[] = [];
+    const failed = createConfirmActionHandler({
+      authorize: authorize(),
+      markHot: async (address) => { failedSignals.push(address); },
+      store: { get: async () => null, confirm: async () => null },
+    });
+    expect((await failed(request(`/api/actions/${ID}/confirm`, { method: "POST", body: "{}" }), context())).status).toBe(404);
+    expect(failedSignals).toEqual([]);
+  });
+
+  test("handle marks the owner balance hot exactly once only after success", async () => {
+    const signals: string[] = [];
+    const confirmed = { ...row, pending: null, confirmed_at: "2026-09-12T12:05:00.000Z", provider_handle: HANDLE };
+    const handler = createHandleActionHandler({
+      authorize: authorize(),
+      now: () => new Date("2026-09-12T12:05:00.000Z"),
+      markHot: async (address) => { signals.push(address); },
+      store: { recordHandle: async () => confirmed },
+    });
+    const response = await handler(request(`/api/actions/${ID}/handle`, {
+      method: "POST",
+      body: JSON.stringify({ providerHandle: HANDLE }),
+    }), context());
+    expect(response.status).toBe(200);
+    await Promise.resolve();
+    expect(signals).toEqual([ADDRESS]);
+
+    const failedSignals: string[] = [];
+    const failed = createHandleActionHandler({
+      authorize: authorize(),
+      markHot: async (address) => { failedSignals.push(address); },
+      store: { recordHandle: async () => null },
+    });
+    expect((await failed(request(`/api/actions/${ID}/handle`, {
+      method: "POST",
+      body: JSON.stringify({ providerHandle: HANDLE }),
+    }), context())).status).toBe(404);
+    expect(failedSignals).toEqual([]);
   });
 
   test("a failed confirm emits exactly one bounded event without money or call fields", async () => {

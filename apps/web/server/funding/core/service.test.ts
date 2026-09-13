@@ -12,6 +12,7 @@ function setup(outcome: "created" | "ambiguous" = "created") {
   let blockReads = 0;
   let observation: "awaiting-payment" | "sent" = "awaiting-payment";
   let date = new Date("2026-09-12T00:00:00.000Z");
+  const staleSignals: Array<{ address: string; at: string }> = [];
   const provider: FundingProvider = {
     manifest,
     async createOrder(input, ctx) {
@@ -22,8 +23,8 @@ function setup(outcome: "created" | "ambiguous" = "created") {
     },
     async getOrder() { return { state: observation, providerStatus: observation, transactionHash: observation === "sent" ? `0x${"2".repeat(64)}` : null }; },
   };
-  const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) }, currentBaseBlock: async () => { blockReads += 1; return "500"; }, verifyReceipt: async (_order, hash) => ({ transactionHash: hash, logIndex: 4 }), now: () => date });
-  return { core, dispatches: () => dispatches, blockReads: () => blockReads, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
+  const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) }, currentBaseBlock: async () => { blockReads += 1; return "500"; }, verifyReceipt: async (_order, hash) => ({ transactionHash: hash, logIndex: 4 }), markStale: async (address, at) => { staleSignals.push({ address, at: at.toISOString() }); }, now: () => date });
+  return { core, dispatches: () => dispatches, blockReads: () => blockReads, staleSignals: () => staleSignals, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
 }
 
 describe("FundingCore", () => {
@@ -84,6 +85,11 @@ describe("FundingCore", () => {
     const received = await fixture.core.getOrder(session, created.id);
     expect(received.state).toBe("received");
     expect(received.instructions).toBeNull();
+    await Promise.resolve();
+    expect(fixture.staleSignals()).toEqual([{
+      address: session.smartAccount!.address,
+      at: "2026-09-12T00:00:10.000Z",
+    }]);
   });
 
   test("logs unmatched webhooks without raw bodies or provider order identifiers", async () => {
