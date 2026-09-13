@@ -1,11 +1,22 @@
 import "server-only";
 
-import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createPublicClient, getAddress, http } from "viem";
 import { base } from "viem/chains";
 import { createSiweMessage, parseSiweMessage } from "viem/siwe";
 import { BASE_CHAIN_ID, type VerifiedAccountSession } from "@/shared/account/session-types";
 import { resolveBaseRpcUrl } from "@/server/chain/rpc";
+import {
+  clearCookie,
+  cookie,
+  equalText,
+  readCookie,
+  readSignedValue,
+  requestOrigin,
+  signedValue,
+} from "@/server/auth/signed-cookie";
+
+export { clearCookie, cookie, readCookie, readSignedValue, signedValue } from "@/server/auth/signed-cookie";
 
 export const HOME_SESSION_COOKIE = "home-session";
 export const HOME_CHALLENGE_COOKIE = "home-auth-challenge";
@@ -25,20 +36,6 @@ export function isHomeSessionConfigured(secret: string | undefined): boolean {
   return normalizeSecret(secret) !== null;
 }
 
-function requestOrigin(request: Request): URL | null {
-  try {
-    const url = new URL(request.url);
-    if (
-      (url.protocol !== "https:" && url.protocol !== "http:") ||
-      url.username ||
-      url.password
-    ) return null;
-    return new URL(url.origin);
-  } catch {
-    return null;
-  }
-}
-
 function isSameOriginPost(request: Request): boolean {
   if (request.method !== "POST") return false;
   const expected = requestOrigin(request)?.origin;
@@ -52,54 +49,6 @@ function isSameOriginPost(request: Request): boolean {
   }
   const fetchSite = request.headers.get("sec-fetch-site");
   return fetchSite === null || fetchSite === "same-origin";
-}
-
-function hmac(secret: Buffer, value: string): string {
-  return createHmac("sha256", secret).update(value).digest("base64url");
-}
-
-function equalText(left: string, right: string): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function signedValue(secret: Buffer, value: string): string {
-  const encoded = Buffer.from(value, "utf8").toString("base64url");
-  return `v1.${encoded}.${hmac(secret, `v1.${encoded}`)}`;
-}
-
-function readSignedValue(secret: Buffer, token: string): string | null {
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return null;
-  const input = `${parts[0]}.${parts[1]}`;
-  if (!equalText(parts[2], hmac(secret, input))) return null;
-  try {
-    return Buffer.from(parts[1], "base64url").toString("utf8");
-  } catch {
-    return null;
-  }
-}
-
-function readCookie(request: Request, name: string): { present: boolean; value: string | null } {
-  const header = request.headers.get("cookie");
-  if (!header) return { present: false, value: null };
-  const values = header
-    .split(";")
-    .map((part) => part.trim())
-    .filter((part) => part.startsWith(`${name}=`))
-    .map((part) => part.slice(name.length + 1));
-  if (values.length === 0) return { present: false, value: null };
-  return { present: true, value: values.length === 1 && values[0] ? values[0] : null };
-}
-
-function cookie(name: string, value: string, request: Request, maxAge: number): string {
-  const secure = requestOrigin(request)?.protocol === "https:" ? "; Secure" : "";
-  return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
-}
-
-export function clearCookie(name: string, request: Request): string {
-  return cookie(name, "", request, 0);
 }
 
 function json(body: unknown, status: number, cookies: string[] = []): Response {
