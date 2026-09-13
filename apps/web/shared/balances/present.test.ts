@@ -85,6 +85,23 @@ describe("balance presentation", () => {
     expect(idrRows).toHaveLength(1);
   });
 
+  test("keeps an available unpriced cash quantity in the default foreground", () => {
+    const snapshot = buildBalancesSnapshotFixture({
+      registry: {
+        idrx: {
+          balance: ready("23432700"),
+          cashValue: { status: "unpriced", reason: "price-unavailable" },
+        },
+      },
+    });
+
+    const idrx = presentBalanceRows(snapshot).find((row) => row.name === "Indonesian rupiah");
+    expect(idrx).toMatchObject({
+      primary: "234,327.00 IDRX",
+      tone: "default",
+    });
+  });
+
   test("uses each cash holding's native denomination in another region", () => {
     const snapshot = buildBalancesSnapshotFixture({
       region: "DE",

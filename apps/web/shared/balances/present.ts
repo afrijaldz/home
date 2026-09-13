@@ -174,7 +174,7 @@ function presentCash(entry: CashSelection, snapshot: BalancesSnapshot): BalanceR
     mark: { kind: "flag", currency },
     primary: tokenQuantity(holding, snapshot),
     secondary: null,
-    tone: "muted",
+    tone: "default",
   };
 }
 
