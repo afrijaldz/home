@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ItemGroup } from "@/components/ui/item";
@@ -12,7 +14,12 @@ import {
   type AssetMarkResolution,
 } from "@/client/asset-mark/presentation";
 import type { RegionId } from "@/config/regions";
-import type { BalanceRowModel, BalancesPresentation } from "@/shared/balances/present";
+import {
+  HOME_MONEY_GROUP_PREVIEW_COUNT,
+  type BalanceRowModel,
+  type BalancesPresentation,
+  type MoneyGroupPresentation,
+} from "@/shared/balances/present";
 import { ShimmerRows } from "./panel-shared";
 
 const BALANCES_BATCH_SIZE = 10;
@@ -96,7 +103,7 @@ export function BalancesPage({
   const showBalanceStatus =
     assetBalances?.status !== "loading" && Boolean(balanceStatusLabel);
   return (
-    <section className="space-y-3" aria-label="Balances">
+    <section className="space-y-3" aria-label="Your money">
       {showBalanceStatus ? (
         <p className="text-sm text-muted-foreground" data-total-status={assetBalances?.totalStatus}>
           {balanceStatusLabel}
@@ -106,7 +113,7 @@ export function BalancesPage({
         <CardContent className="px-2">
           <IncrementalBalancesList
             active={active}
-            rows={assetBalances?.rows ?? []}
+            groups={assetBalances?.groups ?? []}
             isLoading={isLoading}
             isUnavailable={assetBalances?.status === "unavailable"}
             assetMarkResolution={assetMarkResolution}
@@ -119,6 +126,49 @@ export function BalancesPage({
   );
 }
 
+export function HomeMoneyGroups({
+  groups,
+  isLoading,
+  isUnavailable = false,
+  assetMarkResolution,
+  onOpenGroup,
+}: {
+  groups: readonly MoneyGroupPresentation[];
+  isLoading: boolean;
+  isUnavailable?: boolean;
+  assetMarkResolution?: AssetMarkResolution;
+  onOpenGroup: (group: MoneyGroupPresentation["id"]) => void;
+}) {
+  if (groups.length > 0) {
+    return (
+      <GroupedBalancesList
+        groups={groups.map((group) => ({
+          ...group,
+          rows: group.rows.slice(0, HOME_MONEY_GROUP_PREVIEW_COUNT),
+        }))}
+        assetMarkResolution={assetMarkResolution}
+        moreGroups={new Set(
+          groups
+            .filter((group) => group.rows.length > HOME_MONEY_GROUP_PREVIEW_COUNT)
+            .map((group) => group.id),
+        )}
+        onOpenGroup={onOpenGroup}
+      />
+    );
+  }
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <LoadingMoneyGroup label="Cash" />
+        <LoadingMoneyGroup label="Investments" />
+      </div>
+    );
+  }
+  if (isUnavailable) return null;
+  return <BalancesEmpty />;
+}
+
+/** Kept as the single-row-list boundary used by focused row behavior tests. */
 export function HomeBalancesList({
   rows,
   isLoading,
@@ -140,7 +190,7 @@ export function HomeBalancesList({
 
 function IncrementalBalancesList({
   active,
-  rows,
+  groups,
   isLoading,
   isUnavailable = false,
   assetMarkResolution,
@@ -148,15 +198,16 @@ function IncrementalBalancesList({
   onRevealMore,
 }: {
   active: boolean;
-  rows: readonly BalanceRowModel[];
+  groups: readonly MoneyGroupPresentation[];
   isLoading: boolean;
   isUnavailable?: boolean;
   assetMarkResolution?: AssetMarkResolution;
   revealedCount: number;
   onRevealMore: () => void;
 }) {
-  const count = Math.min(revealedCount, rows.length);
-  const hasMore = count < rows.length;
+  const rowCount = groups.reduce((count, group) => count + group.rows.length, 0);
+  const count = Math.min(revealedCount, rowCount);
+  const hasMore = count < rowCount;
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -173,24 +224,109 @@ function IncrementalBalancesList({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [active, hasMore, onRevealMore, revealedCount, rows.length]);
+  }, [active, hasMore, onRevealMore, revealedCount, rowCount]);
 
-  if (rows.length === 0) {
+  if (rowCount === 0) {
     if (isLoading) return <ShimmerRows count={2} />;
     if (isUnavailable) return null;
     return <BalancesEmpty />;
   }
 
+  const visibleGroups = groups.map((group, index) => {
+    const priorRowCount = groups
+      .slice(0, index)
+      .reduce((total, prior) => total + prior.rows.length, 0);
+    const remaining = Math.max(0, count - priorRowCount);
+    return { ...group, rows: group.rows.slice(0, remaining) };
+  });
+
   return (
     <>
-      <BalancesList
-        rows={rows.slice(0, count)}
+      <GroupedBalancesList
+        groups={visibleGroups}
         assetMarkResolution={assetMarkResolution}
+        withAnchors
       />
       {active && hasMore ? (
         <div ref={sentinelRef} className="h-px" aria-hidden="true" />
       ) : null}
     </>
+  );
+}
+
+function GroupedBalancesList({
+  groups,
+  assetMarkResolution,
+  moreGroups = new Set(),
+  onOpenGroup,
+  withAnchors = false,
+}: {
+  groups: readonly MoneyGroupPresentation[];
+  assetMarkResolution?: AssetMarkResolution;
+  moreGroups?: ReadonlySet<MoneyGroupPresentation["id"]>;
+  onOpenGroup?: (group: MoneyGroupPresentation["id"]) => void;
+  withAnchors?: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <section
+          key={group.id}
+          id={withAnchors ? group.id : undefined}
+          className="scroll-mt-4"
+          data-money-group={group.id}
+          aria-labelledby={`${withAnchors ? "panel" : "home"}-${group.id}-heading`}
+        >
+          <MoneyGroupHeader
+            id={`${withAnchors ? "panel" : "home"}-${group.id}-heading`}
+            label={group.label}
+            subtotal={group.displaySubtotal}
+          />
+          {group.rows.length > 0 ? (
+            <BalancesList rows={group.rows} assetMarkResolution={assetMarkResolution} />
+          ) : null}
+          {moreGroups.has(group.id) && onOpenGroup ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="ml-1"
+              onClick={() => onOpenGroup(group.id)}
+              aria-label={`More ${group.label}`}
+            >
+              More
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+          ) : null}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function MoneyGroupHeader({
+  id,
+  label,
+  subtotal,
+}: {
+  id: string;
+  label: string;
+  subtotal: string | null;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm font-medium text-muted-foreground">
+      <h3 id={id}>{label}</h3>
+      {subtotal ? <MoneyTicker value={subtotal} reserveDigits={false} /> : null}
+    </div>
+  );
+}
+
+function LoadingMoneyGroup({ label }: { label: string }) {
+  return (
+    <section aria-busy="true">
+      <MoneyGroupHeader id={`loading-${label.toLowerCase()}-heading`} label={label} subtotal={null} />
+      <ShimmerRows count={2} />
+    </section>
   );
 }
 
@@ -220,7 +356,7 @@ function BalancesEmpty() {
   return (
     <Empty className="p-4">
       <EmptyHeader>
-        <EmptyTitle>No balances yet</EmptyTitle>
+        <EmptyTitle>No money yet</EmptyTitle>
       </EmptyHeader>
     </Empty>
   );

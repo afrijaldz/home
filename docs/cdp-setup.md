@@ -18,7 +18,7 @@ The server SDK's usage tracking and error reporting are disabled by Home before 
 
 ## Preview auth
 
-Email OTP and Base Account are only testable on `http://localhost:3000` and the production alias (`https://home-web-jessepollaks-projects.vercel.app`) right now. Those origins stay on Embedded Wallet CORS. Vercel preview hosts are not allowlisted — sign-in fails there (`We could not send a code…`, `We could not connect to Base Account…`). Those banners are CDP client rejections after the app loaded, not Vercel Deployment Protection. Background: [#67](https://github.com/jessepollak/home/issues/67). Hosting notes: [Vercel deploy](vercel-deploy.md#preview-auth).
+Email OTP is only testable on `http://localhost:3000` and the production alias (`https://home-web-jessepollaks-projects.vercel.app`) right now. Those origins stay on Embedded Wallet CORS. Vercel preview hosts are not allowlisted, so email sign-in fails there (`We could not send a code…`). This is a CDP client rejection after the app loads, not Vercel Deployment Protection. Base Account uses Home-native SIWE and does not depend on CDP origin allowlisting. Background: [#67](https://github.com/jessepollak/home/issues/67). Hosting notes: [Vercel deploy](vercel-deploy.md#preview-auth).
 
 **Default (A).** Smoke auth on localhost or production. PR previews stay UI/layout.
 
@@ -55,8 +55,7 @@ If the label before `.vercel.app` would exceed 63 characters, Vercel truncates i
 
 1. [CDP Portal](https://portal.cdp.coinbase.com) → the project for `NEXT_PUBLIC_CDP_PROJECT_ID` (same project; do not rotate keys to work around CORS).
 2. Embedded Wallets → **CORS / Allowed domains** → Add domain. Paste the exact origin: no path, no trailing slash.
-3. If `NEXT_PUBLIC_ENABLE_BASE_ACCOUNT=1`, also allow that origin for **SIWE / Clients** in the same project. See [Base Account](base-account.md).
-4. Hard-refresh the preview. Retry email, then Base Account if the flag is on.
+3. Hard-refresh the preview and retry email. Base Account setup is documented separately in [Base Account](base-account.md).
 
 ### 50-domain cap
 
@@ -64,9 +63,9 @@ Prune origins for merged or closed PRs. Do not leave every preview on the list. 
 
 ### Smoke checklist
 
-- [ ] Default: email OTP (and Base Account if enabled) on localhost or production. Auth is not testable on an unlisted preview.
-- [ ] Escape hatch only if this PR must demo auth on its preview: add the branch-stable origin, then confirm the address bar matches the Portal entry.
-- [ ] After Portal save: email code sends; Base Account connects when the flag is on.
+- [ ] Default: email OTP on localhost or production. CDP email auth is not testable on an unlisted preview.
+- [ ] Escape hatch only if this PR must demo email auth on its preview: add the branch-stable origin, then confirm the address bar matches the Portal entry.
+- [ ] After Portal save: email code sends.
 - [ ] After the PR closes: remove that preview origin.
 - [ ] Do not treat Onramp wildcards or a green preview build as Embedded Wallet CORS.
 

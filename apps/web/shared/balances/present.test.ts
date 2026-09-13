@@ -10,7 +10,7 @@ import {
   ready,
   unavailableBalance,
 } from "./fixtures";
-import { presentBalanceRows, presentBalances, previewBalanceRows } from "./present";
+import { presentBalanceRows, presentBalances, presentMoneyGroups } from "./present";
 
 describe("balance presentation", () => {
   test("keeps cash truth, hides noncash zero/unavailable and vault shares, and includes catalog rows", () => {
@@ -25,15 +25,16 @@ describe("balance presentation", () => {
     ]);
     expect(rows.some((row) => row.name.includes("vault"))).toBeFalse();
     expect(rows.some((row) => row.name === "Toshi")).toBeFalse();
-    expect(previewBalanceRows(rows).map((row) => row.name)).toEqual([
-      "US dollar",
-      "Ethereum",
-      "Aerodrome",
-      "Bitcoin",
+    expect(presentMoneyGroups(balancesSnapshotFixture).map((group) => ({
+      id: group.id,
+      rows: group.rows.slice(0, 3).map((row) => row.name),
+    }))).toEqual([
+      { id: "cash", rows: ["US dollar"] },
+      { id: "investments", rows: ["Ethereum", "Aerodrome", "Bitcoin"] },
     ]);
   });
 
-  test("orders cash, priced descending, unpriced by name, then dust", () => {
+  test("orders each money group by fiat value, then keeps unpriced rows", () => {
     const snapshot = buildBalancesSnapshotFixture({
       registry: {
         usdc: { balance: ready("1"), cashValue: pricedCash("USD", "1") },
@@ -47,8 +48,8 @@ describe("balance presentation", () => {
       "US dollar",
       "Aerodrome",
       "Ethereum",
-      "Bitcoin",
       "Toshi",
+      "Bitcoin",
     ]);
   });
 
@@ -64,6 +65,7 @@ describe("balance presentation", () => {
       primary: "Unavailable",
       tone: "error",
     });
+    expect(presentMoneyGroups(snapshot)[0]?.displaySubtotal).toBeNull();
   });
 
   test("renders a positive non-selected cash holding once in the cash group", () => {
@@ -100,6 +102,8 @@ describe("balance presentation", () => {
     expect(presentBalances({ status: "loading", snapshot: null, error: null })).toEqual({
       status: "loading",
       displayTotal: null,
+      groups: [],
+      breakdown: [],
       rows: [],
     });
     const ready = presentBalances({
@@ -108,7 +112,17 @@ describe("balance presentation", () => {
       error: null,
       revalidating: true,
     });
-    expect(ready).toMatchObject({ status: "ready", displayTotal: "$1.23", totalStatus: "partial", revalidating: true });
+    expect(ready).toMatchObject({
+      status: "ready",
+      displayTotal: "$1.23",
+      totalStatus: "partial",
+      breakdown: [
+        { id: "cash", label: "Cash", value: "$1,234.56" },
+        { id: "investments", label: "Investments", value: "$1,618.20" },
+        { id: "saved", label: "Saved", value: "$1,000.12" },
+      ],
+      revalidating: true,
+    });
     expect(JSON.stringify(ready.rows)).not.toContain("Updating");
     expect(presentBalances({ status: "error", snapshot: null, error: "balances-unavailable" })).toMatchObject({
       status: "unavailable",

@@ -15,6 +15,7 @@ describe("shell location", () => {
       account: null,
       shelf: null,
       asset: null,
+      group: null,
     });
     expect(shellHref("/dashboard")).toBe("/dashboard");
   });
@@ -23,6 +24,7 @@ describe("shell location", () => {
     const cases = [
       [{ panel: "save" as const }, "/dashboard?panel=save"],
       [{ panel: "balances" as const }, "/dashboard?panel=balances"],
+      [{ panel: "balances" as const, group: "investments" as const }, "/dashboard?panel=balances&group=investments"],
       [{ panel: "activity" as const }, "/dashboard?panel=activity"],
       [{ panel: "invest" as const, shelf: "crypto" }, "/dashboard?panel=invest&shelf=crypto"],
       [{ panel: "invest" as const, asset: "cbbtc", shelf: "crypto" }, "/dashboard?panel=invest&shelf=crypto&asset=cbbtc"],
@@ -44,6 +46,7 @@ describe("shell location", () => {
         account: null,
         shelf: "crypto",
         asset: "cbbtc",
+        group: null,
       },
       returnedFromFunding: true,
       addMoney: true,
@@ -67,6 +70,15 @@ describe("shell location", () => {
     }
   });
 
+  test("allowlists money-group anchors only on Your money", () => {
+    expect(parseShellLocation(new URLSearchParams("panel=balances&group=cash"))).toMatchObject({
+      panel: "balances",
+      group: "cash",
+    });
+    expect(parseShellLocation(new URLSearchParams("panel=balances&group=stocks")).group).toBeNull();
+    expect(parseShellLocation(new URLSearchParams("panel=home&group=investments")).group).toBeNull();
+  });
+
   test("ignores malformed or unknown inbound values", () => {
     expect(parseInboundUrlIntent({
       panel: "explore",
@@ -79,7 +91,7 @@ describe("shell location", () => {
       action: "not-an-id",
     })).toEqual({
       kind: "inbound-url-intent",
-      location: { panel: "home", account: null, shelf: null, asset: null },
+      location: { panel: "home", account: null, shelf: null, asset: null, group: null },
       returnedFromFunding: false,
       addMoney: false,
       flow: null,
@@ -95,7 +107,7 @@ describe("shell location", () => {
 
   test("ignores invest params unless the panel is Invest", () => {
     expect(parseShellLocation({ panel: "save", shelf: "crypto", asset: "cbbtc" }))
-      .toEqual({ panel: "save", account: null, shelf: null, asset: null });
+      .toEqual({ panel: "save", account: null, shelf: null, asset: null, group: null });
   });
 });
 

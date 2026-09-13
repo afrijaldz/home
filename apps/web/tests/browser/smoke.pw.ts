@@ -1,3 +1,4 @@
+import { createHash, createHmac } from "node:crypto";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { RegionId } from "../../config/regions";
 import { parseBalancesSnapshot } from "../../shared/balances/contract";
@@ -264,6 +265,44 @@ async function amountMetrics(page: Page) {
   });
 }
 
+test("a valid Home session redirects the landing route before rendering", async ({ context }) => {
+  const address = "0x1111111111111111111111111111111111111111";
+  const key = "playwright-smoke-home-session-secret-32-bytes!!";
+  const issuedAt = new Date();
+  const subject = `base-${createHash("sha256").update(address).digest("hex").slice(0, 32)}`;
+  const payload = JSON.stringify({
+    version: 1,
+    session: {
+      user: { subject },
+      smartAccount: { address, chainId: 8453 },
+      accountProvider: "base-account",
+    },
+    issuedAt: issuedAt.toISOString(),
+    expiresAt: new Date(issuedAt.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  const encoded = Buffer.from(payload, "utf8").toString("base64url");
+  const input = `v1.${encoded}`;
+  const signature = createHmac("sha256", Buffer.from(key, "utf8"))
+    .update(input)
+    .digest("base64url");
+
+  await context.addCookies([{
+    name: "home-session",
+    value: `${input}.${signature}`,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  }]);
+
+  const redirected = await context.request.get("/", { maxRedirects: 0 });
+  expect(redirected.status()).toBe(307);
+  expect(redirected.headers().location).toBe("/dashboard");
+
+  const signIn = await context.request.get("/?account=signin", { maxRedirects: 0 });
+  expect(signIn.status()).toBe(200);
+});
+
 function expectTickerInsideAmount(metrics: NonNullable<Awaited<ReturnType<typeof amountMetrics>>>) {
   expect(metrics.tickerLeft).toBeGreaterThanOrEqual(metrics.containerLeft - 0.5);
   expect(metrics.tickerRight).toBeLessThanOrEqual(metrics.containerRight + 0.5);
@@ -311,8 +350,8 @@ test("catalog token appears on Home and Balances with its image, but never enter
   await expect(homeCatalogRow.locator(`img[src="${RECOGNIZED_IMAGE_URL}"]`)).toBeVisible();
   await expect(homeCatalogRow.locator('[data-mark="image"]')).toBeVisible();
 
-  await page.getByRole("button", { name: "Balances" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
+  await page.getByRole("button", { name: "Your money" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
   const balancesCatalogRow = page.locator('[data-shell-panel]:not([hidden]) li', {
     hasText: "Recognized Coin",
   });
@@ -328,7 +367,21 @@ test("catalog token appears on Home and Balances with its image, but never enter
   await expect(send.getByText(/12\.34 available/)).toBeVisible();
 });
 
-test("Home, Save, Balances, and Home reuse one balances request per region", async ({ page }) => {
+test("Home More opens Your money at the requested group", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("home.country.v1", "US"));
+  await installApiFixtures(page, { balances: scrollableBalancesSnapshot() });
+  await signIn(page);
+
+  const investments = page.locator('[data-money-group="investments"]');
+  await expect(investments.locator('[data-kind="balance"]')).toHaveCount(3);
+  await investments.getByRole("button", { name: "More Investments" }).click();
+
+  await expect(page).toHaveURL(/\/dashboard\?panel=balances&group=investments$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
+  await expect(page.locator('#investments[data-money-group="investments"]')).toBeVisible();
+});
+
+test("Home, Save, Your money, and Home reuse one balances request per region", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("home.country.v1", "US"));
   const fixtures = await installApiFixtures(page);
   const startedAt = Date.now();
@@ -338,8 +391,8 @@ test("Home, Save, Balances, and Home reuse one balances request per region", asy
   await page.locator('section[aria-labelledby="save-heading"]').getByRole("button").click();
   await expect(page.getByRole("region", { name: "Save" })).toBeVisible();
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByRole("button", { name: "Balances", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
+  await page.getByRole("button", { name: "Your money", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("button", { name: "Add money", exact: true })).toBeVisible();
 
@@ -360,8 +413,8 @@ test("cash, priced catalog, and unpriced registry balances share one row anatomy
   )).toBe(0);
   fixtures.releaseBalances();
 
-  await page.getByRole("button", { name: "Balances", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
+  await page.getByRole("button", { name: "Your money", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     performance.getEntriesByName("balances:painted", "mark").length,
   )).toBe(1);
@@ -647,7 +700,7 @@ test("Add money close preserves the active panel", async ({ page }) => {
   await installApiFixtures(page);
   await signIn(page);
 
-  await page.getByRole("button", { name: "Balances", exact: true }).click();
+  await page.getByRole("button", { name: "Your money", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard\?panel=balances$/);
   await page.evaluate(() => {
     window.history.pushState(null, "", "/dashboard?panel=balances&flow=add-money");
@@ -849,8 +902,8 @@ async function openScrolledBalances(page: Page) {
   await page.setViewportSize({ width: 390, height: 440 });
   await signIn(page);
 
-  await page.getByRole("button", { name: "Balances" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
+  await page.getByRole("button", { name: "Your money" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
   await expect(page).toHaveURL(/[?&]panel=balances/);
 
   const maxTop = await page.evaluate(() => {
@@ -913,7 +966,7 @@ async function expectBalancesRestored(
   page: Page,
   expected: { target: number; revealedCount: number; maxTop: number },
 ) {
-  await expect(page.getByRole("heading", { name: "Balances" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your money" })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(
@@ -953,7 +1006,7 @@ async function clickForwardAndWaitForUrl(
 }
 
 async function expectBalancesReset(page: Page) {
-  await expect(page.getByRole("heading", { level: 1, name: "Balances" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Your money" })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(

@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import { ClipboardPaste } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { formatAddress, isAddress } from "@/shared/formatting";
 
 export function AddressField({
@@ -39,33 +43,37 @@ export function AddressField({
 
   return (
     <Field>
-      <div className="flex min-h-11 items-center justify-between gap-2">
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <Button
-          className="size-11 shrink-0"
-          variant="ghost"
-          size="icon-lg"
-          type="button"
+      <FieldLabel htmlFor={id} className="sr-only">
+        {label}
+      </FieldLabel>
+      <InputGroup className="h-11">
+        <InputGroupAddon align="inline-start">{label}</InputGroupAddon>
+        <InputGroupInput
+          id={id}
+          className="h-11 font-mono text-sm"
+          value={display}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={placeholder}
+          autoComplete="off"
+          spellCheck={false}
           disabled={disabled}
-          aria-label="Paste address"
-          onClick={() => void paste()}
-        >
-          <ClipboardPaste className="size-4" aria-hidden="true" />
-        </Button>
-      </div>
-      <Input
-        id={id}
-        className="h-11 font-mono text-sm"
-        value={display}
-        onChange={(event) => onChange(event.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        placeholder={placeholder}
-        autoComplete="off"
-        spellCheck={false}
-        disabled={disabled}
-        aria-describedby={describedBy}
-      />
+          aria-label={label}
+          aria-describedby={describedBy}
+        />
+        <InputGroupAddon align="inline-end">
+          <InputGroupButton
+            className="size-11 shrink-0"
+            size="icon-sm"
+            disabled={disabled}
+            aria-label="Paste address"
+            onClick={() => void paste()}
+          >
+            <ClipboardPaste className="size-4" aria-hidden="true" />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
     </Field>
   );
 }

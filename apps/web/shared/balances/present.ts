@@ -4,8 +4,7 @@ import {
   formatPresentationFiat,
   presentationCurrencyName,
 } from "@/shared/portfolio/valuation-format";
-import { exactDecimalToFraction } from "@/shared/portfolio/valuation-math";
-import { selectCash, selectTotal, type CashSelection } from "./select";
+import { selectMoneyGroups, selectTotal, type CashSelection } from "./select";
 import type { BalancesSnapshot, BalancesState, ExactDecimal, Holding } from "./types";
 
 export type BalanceRowModel = {
@@ -22,27 +21,35 @@ export type BalanceRowModel = {
   tone: "default" | "muted" | "error";
 };
 
+export type MoneyGroupPresentation = {
+  id: "cash" | "investments";
+  label: "Cash" | "Investments";
+  displaySubtotal: string | null;
+  rows: BalanceRowModel[];
+};
+
+export type MoneyBreakdownItem = {
+  id: "cash" | "investments" | "saved";
+  label: "Cash" | "Investments" | "Saved";
+  value: string;
+};
+
 export type BalancesPresentation = {
   status: "loading" | "ready" | "unavailable";
   displayTotal: string | null;
   totalStatus?: "complete" | "partial" | "unavailable";
   statusLabel?: string;
+  groups: MoneyGroupPresentation[];
+  breakdown: MoneyBreakdownItem[];
   rows: BalanceRowModel[];
   revalidating?: true;
 };
 
-export const HOME_BALANCES_HUB_PREVIEW_COUNT = 4;
-
-export function previewBalanceRows(
-  rows: readonly BalanceRowModel[],
-  limit = HOME_BALANCES_HUB_PREVIEW_COUNT,
-): readonly BalanceRowModel[] {
-  return rows.slice(0, limit);
-}
+export const HOME_MONEY_GROUP_PREVIEW_COUNT = 3;
 
 export function presentBalances(state: BalancesState): BalancesPresentation {
   if (state.status === "loading") {
-    return { status: "loading", displayTotal: null, rows: [] };
+    return { status: "loading", displayTotal: null, groups: [], breakdown: [], rows: [] };
   }
   if (state.status !== "ready") {
     return {
@@ -50,6 +57,8 @@ export function presentBalances(state: BalancesState): BalancesPresentation {
       displayTotal: null,
       totalStatus: "unavailable",
       statusLabel: "Balance unavailable",
+      groups: [],
+      breakdown: [],
       rows: [],
     };
   }
@@ -57,6 +66,20 @@ export function presentBalances(state: BalancesState): BalancesPresentation {
   const total = selectTotal(state.snapshot);
   const noCurrency = total.status === "no-quote-currency";
   const unavailable = total.status === "unavailable";
+  const groups = presentMoneyGroups(state.snapshot);
+  const breakdown = groups.flatMap((group): MoneyBreakdownItem[] =>
+    group.displaySubtotal
+      ? [{ id: group.id, label: group.label, value: group.displaySubtotal }]
+      : []
+  );
+  // Saved uses the same quote-currency subtotal as Cash and Investments; vault shares are
+  // priced holdings in the snapshot, so the three figures share currency, precision, and the
+  // unpriced rule (omitted, never 0).
+  const vaultShares = state.snapshot.holdings.filter((holding) => holding.kind === "vault-share");
+  const savedSubtotal = vaultShares.length > 0 ? presentHoldingsSubtotal(vaultShares, state.snapshot) : null;
+  if (savedSubtotal) {
+    breakdown.push({ id: "saved", label: "Saved", value: savedSubtotal });
+  }
   return {
     status: "ready",
     displayTotal: total.value && total.currency
@@ -72,41 +95,36 @@ export function presentBalances(state: BalancesState): BalancesPresentation {
       : unavailable
         ? "Balance unavailable"
         : undefined,
-    rows: presentBalanceRows(state.snapshot),
+    groups,
+    breakdown,
+    rows: groups.flatMap((group) => group.rows),
     ...(state.revalidating ? { revalidating: true as const } : {}),
   };
 }
 
-export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[] {
-  const cashSelections = selectCash(snapshot);
-  const selectedCashIds = new Set(
-    cashSelections.flatMap((entry) => entry.kind === "holding" ? [entry.holding.id] : []),
-  );
-  const cash = cashSelections.map((entry) => presentCash(entry, snapshot));
-  const priced: Array<{ row: BalanceRowModel; value: ExactDecimal }> = [];
-  const unpriced: BalanceRowModel[] = [];
-  const dust: BalanceRowModel[] = [];
-
-  for (const holding of snapshot.holdings) {
-    if (
-      holding.kind === "vault-share" ||
-      selectedCashIds.has(holding.id) ||
-      holding.balance.status !== "ready" ||
-      holding.balance.baseUnits === "0"
-    ) continue;
-    const row = presentAsset(holding, snapshot);
-    if (holding.value.status === "priced") {
-      if (isAtLeastOneCent(holding.value.amount)) priced.push({ row, value: holding.value.amount });
-      else dust.push(row);
-    } else {
-      unpriced.push(row);
-    }
+export function presentMoneyGroups(snapshot: BalancesSnapshot): MoneyGroupPresentation[] {
+  const selected = selectMoneyGroups(snapshot);
+  const cashRows = selected.cash.map((entry) => presentCash(entry, snapshot));
+  const investmentRows = selected.investments.map((holding) => presentAsset(holding, snapshot));
+  const groups: MoneyGroupPresentation[] = [{
+    id: "cash",
+    label: "Cash",
+    displaySubtotal: presentCashSubtotal(selected.cash, snapshot),
+    rows: cashRows,
+  }];
+  if (investmentRows.length > 0) {
+    groups.push({
+      id: "investments",
+      label: "Investments",
+      displaySubtotal: presentHoldingsSubtotal(selected.investments, snapshot),
+      rows: investmentRows,
+    });
   }
+  return groups;
+}
 
-  priced.sort((left, right) => compareExactDecimals(right.value, left.value) || compareRows(left.row, right.row));
-  unpriced.sort(compareRows);
-  dust.sort(compareRows);
-  return [...cash, ...priced.map(({ row }) => row), ...unpriced, ...dust];
+export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[] {
+  return presentMoneyGroups(snapshot).flatMap((group) => group.rows);
 }
 
 function presentCash(entry: CashSelection, snapshot: BalancesSnapshot): BalanceRowModel {
@@ -185,6 +203,38 @@ function presentAsset(holding: Holding, snapshot: BalancesSnapshot): BalanceRowM
   };
 }
 
+function presentCashSubtotal(
+  entries: readonly CashSelection[],
+  snapshot: BalancesSnapshot,
+): string | null {
+  return presentHoldingsSubtotal(
+    entries.flatMap((entry) => entry.kind === "holding" ? [entry.holding] : []),
+    snapshot,
+  );
+}
+
+function presentHoldingsSubtotal(
+  holdings: readonly Holding[],
+  snapshot: BalancesSnapshot,
+): string | null {
+  if (!snapshot.quoteCurrency) return null;
+  const values = holdings.flatMap((holding) =>
+    holding.value.status === "priced" ? [holding.value.amount] : []
+  );
+  if (values.length === 0 && holdings.length > 0) return null;
+  const sum = sumExactDecimals(values);
+  return formatPresentationFiat(sum, snapshot.quoteCurrency, 2, snapshot.region);
+}
+
+function sumExactDecimals(values: readonly ExactDecimal[]): ExactDecimal {
+  const scale = values.reduce((maximum, value) => Math.max(maximum, value.scale), 0);
+  const atoms = values.reduce(
+    (sum, value) => sum + BigInt(value.atoms) * BigInt(10) ** BigInt(scale - value.scale),
+    BigInt(0),
+  );
+  return { atoms: atoms.toString(), scale };
+}
+
 function tokenQuantity(holding: Holding, snapshot: BalancesSnapshot): string {
   if (holding.balance.status !== "ready") return "Unavailable";
   return formatPresentationTokenAmount(
@@ -197,21 +247,4 @@ function tokenQuantity(holding: Holding, snapshot: BalancesSnapshot): string {
       regionId: snapshot.region,
     },
   );
-}
-
-function isAtLeastOneCent(value: ExactDecimal): boolean {
-  const fraction = exactDecimalToFraction(value);
-  return fraction.numerator * BigInt(100) >= fraction.denominator;
-}
-
-function compareExactDecimals(left: ExactDecimal, right: ExactDecimal): number {
-  const leftFraction = exactDecimalToFraction(left);
-  const rightFraction = exactDecimalToFraction(right);
-  const leftScaled = leftFraction.numerator * rightFraction.denominator;
-  const rightScaled = rightFraction.numerator * leftFraction.denominator;
-  return leftScaled < rightScaled ? -1 : leftScaled > rightScaled ? 1 : 0;
-}
-
-function compareRows(left: BalanceRowModel, right: BalanceRowModel): number {
-  return left.name.localeCompare(right.name, "en", { sensitivity: "base" });
 }

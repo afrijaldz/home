@@ -1,7 +1,13 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import {
   ACCOUNT_PROVIDER_HEADER,
+  type VerifiedAccountSession,
 } from "@/shared/account/session-types";
+import {
+  HOME_CDP_LIVE_COOKIE,
+  HOME_CDP_SESSION_COOKIE,
+  issueCdpRenderHint,
+} from "@/server/auth/cdp-render-session";
 import {
   HOME_CHALLENGE_COOKIE,
   HOME_SESSION_COOKIE,
@@ -16,7 +22,26 @@ const previousSecret = process.env.HOME_SESSION_SECRET;
 const previousProjectId = process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
 
 process.env.HOME_SESSION_SECRET = SECRET;
-delete process.env.NEXT_PUBLIC_CDP_PROJECT_ID;
+process.env.NEXT_PUBLIC_CDP_PROJECT_ID = "project-with-native-session";
+
+const CDP_SESSION: VerifiedAccountSession = {
+  user: { subject: "cdp-route-test-user" },
+  smartAccount: {
+    address: "0x2222222222222222222222222222222222222222",
+    chainId: 8453,
+  },
+  accountProvider: "cdp-embedded",
+};
+
+mock.module("@/server/cdp/provider", () => ({
+  getCdpAccessTokenValidator: async () => ({
+    validateAccessToken: async () => ({
+      userId: CDP_SESSION.user.subject,
+      authenticationMethods: [{ type: "email", email: "private@example.com" }],
+      evmSmartAccountObjects: [{ address: CDP_SESSION.smartAccount!.address }],
+    }),
+  }),
+}));
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(
@@ -28,17 +53,20 @@ globalThis.fetch = Object.assign(
   { preconnect: previousFetch.preconnect },
 );
 
-const [balances, activity, borrow, trades] = await Promise.all([
+const [balances, activity, borrow, trades, sessionRoute, logoutRoute] = await Promise.all([
   import("./balances/route"),
   import("./activity/route"),
   import("./borrow/route"),
   import("./trades/route"),
+  import("./session/route"),
+  import("./auth/base/logout/route"),
 ]);
 
 afterAll(() => {
   restoreEnvironment("HOME_SESSION_SECRET", previousSecret);
   restoreEnvironment("NEXT_PUBLIC_CDP_PROJECT_ID", previousProjectId);
   globalThis.fetch = previousFetch;
+  mock.restore();
 });
 
 describe("consolidated route authorization", () => {
@@ -72,6 +100,54 @@ describe("consolidated route authorization", () => {
       expect((await route.invoke(invalidCookie)).status, `${route.name} invalid session`).toBe(401);
     }
   });
+
+  test("render hints have no private API authority and do not create ambiguity", async () => {
+    const hintCookies = issueCdpRenderHint(
+      SECRET,
+      CDP_SESSION,
+      new Request(`${ORIGIN}/api/session`),
+    ).map(setCookiePair).join("; ");
+
+    const privateResponse = await balances.GET(request(
+      "/api/balances?region=US",
+      "GET",
+      hintCookies,
+      "cdp-embedded",
+    ));
+    expect(privateResponse.status).toBe(401);
+
+    const sessionResponse = await sessionRoute.GET(new Request(`${ORIGIN}/api/session`, {
+      headers: {
+        Authorization: "Bearer verified.token.value",
+        Cookie: hintCookies,
+        [ACCOUNT_PROVIDER_HEADER]: "cdp-embedded",
+      },
+    }));
+    expect(sessionResponse.status).toBe(200);
+    expect(await sessionResponse.json()).toEqual(CDP_SESSION);
+  });
+
+  test("same-origin logout clears native and render-session cookies", async () => {
+    const response = await logoutRoute.POST(new Request(`${ORIGIN}/api/auth/base/logout`, {
+      method: "POST",
+      headers: {
+        Origin: ORIGIN,
+        "Sec-Fetch-Site": "same-origin",
+      },
+    }));
+    expect(response.status).toBe(200);
+    const cleared = response.headers.getSetCookie();
+    for (const name of [
+      HOME_SESSION_COOKIE,
+      HOME_CHALLENGE_COOKIE,
+      HOME_CDP_SESSION_COOKIE,
+      HOME_CDP_LIVE_COOKIE,
+    ]) {
+      expect(cleared.some((value) =>
+        value.startsWith(`${name}=`) && value.includes("Max-Age=0")
+      ), name).toBe(true);
+    }
+  });
 });
 
 async function createSessionCookie(): Promise<string> {
@@ -96,12 +172,17 @@ async function createSessionCookie(): Promise<string> {
   return responseCookie(verifyResponse, HOME_SESSION_COOKIE);
 }
 
-function request(path: string, method: "GET" | "POST", cookie: string): Request {
+function request(
+  path: string,
+  method: "GET" | "POST",
+  cookie: string,
+  provider = "base-account",
+): Request {
   return new Request(`${ORIGIN}${path}`, {
     method,
     headers: {
       Cookie: cookie,
-      [ACCOUNT_PROVIDER_HEADER]: "base-account",
+      [ACCOUNT_PROVIDER_HEADER]: provider,
     },
   });
 }
@@ -120,6 +201,10 @@ function jsonRequest(path: string, body: unknown, cookie?: string): Request {
 function responseCookie(response: Response, name: string): string {
   const value = response.headers.getSetCookie().find((header) => header.startsWith(`${name}=`));
   if (!value) throw new Error(`Missing ${name} cookie`);
+  return value.slice(0, value.indexOf(";"));
+}
+
+function setCookiePair(value: string): string {
   return value.slice(0, value.indexOf(";"));
 }
 

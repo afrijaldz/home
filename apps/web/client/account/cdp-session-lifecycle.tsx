@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AccountWalletContext, type AccountSessionStatus, type AccountWalletClient, type AccountWalletSdkBoundary, type BaseAccountLoginPhase } from "./cdp-client";
 import { connectBaseAccount, restoreBaseAccount, BaseAccountConnectorError, type BaseAccountConnector, type BaseAccountInvalidation, type BaseAccountRestorer, type ConnectedBaseAccount } from "./base-account-connector";
-import { validateAccountSession, type SessionFetch, type VerifiedAccountSession } from "./session-client";
+import { SessionValidationError, validateAccountSession, type SessionFetch, type VerifiedAccountSession } from "./session-client";
 import { BASE_CHAIN_ID, type AccountProvider, type AccountProviderRequest } from "@/shared/account/session-types";
 import {
   clearOwnerQueryBoundary,
@@ -14,7 +14,7 @@ import {
 } from "@/client/query/query-client";
 import { useAuthenticatedTransport } from "./cdp-authenticated-transport";
 import { useMoneyActionExecution } from "./cdp-money-action-execution";
-import { BaseAccountLoginError, baseLoginFailureFromConnector, invalidationMessage, writeAccountProviderHint } from "./cdp-wallet-provider-capabilities";
+import { BaseAccountLoginError, baseLoginFailureFromConnector, clearCdpRenderHint, invalidationMessage, writeAccountProviderHint } from "./cdp-wallet-provider-capabilities";
 import { dataOwnerKey, ownerSessionBoundary } from "./owner-keys";
 import { useOwnerGenerationFence } from "./owner-generation-fence";
 
@@ -118,6 +118,7 @@ export function AccountWalletSessionOwner({
   }, [fence, isSignedIn, ownerKey, provisionalSession]);
 
   const clearPrivate = useCallback(() => {
+    clearCdpRenderHint();
     validationRef.current?.abort();
     setSession(null);
     setVerification(null);
@@ -186,13 +187,19 @@ export function AccountWalletSessionOwner({
       setMessage(null);
     } catch (error) {
       if (controller.signal.aborted || !fence.isCurrent(generation)) return;
-      if (error instanceof BaseAccountConnectorError && error.reason === "missing-connection") {
+      const missingBaseConnection = error instanceof BaseAccountConnectorError &&
+        error.reason === "missing-connection";
+      const cdpIdentityGone = authentication === "cdp" &&
+        error instanceof SessionValidationError &&
+        (error.reason === "unauthenticated" || error.reason === "provider-disabled");
+      if (missingBaseConnection || cdpIdentityGone) {
         fence.advance();
         clearPrivate();
         setStatus("signing-out");
         setMessage(null);
-        providerRef.current = "base-account";
-        writeAccountProviderHint("pending:base-account");
+        const pendingProvider = missingBaseConnection ? "base-account" : "cdp-embedded";
+        providerRef.current = pendingProvider;
+        writeAccountProviderHint(`pending:${pendingProvider}`);
         const cleanup = (async () => {
           await disconnectBase();
           await sdkSignOut();

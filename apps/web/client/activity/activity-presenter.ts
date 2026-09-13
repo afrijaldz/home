@@ -106,22 +106,26 @@ export function presentActivityTransferDetails(
     },
     {
       label: "From",
-      value: formatAddress(transfer.fromAddress),
-      title: transfer.fromAddress,
+      value: transfer.fromAddress,
+      display: formatAddress(transfer.fromAddress),
     },
     {
       label: "To",
-      value: formatAddress(transfer.toAddress),
-      title: transfer.toAddress,
+      value: transfer.toAddress,
+      display: formatAddress(transfer.toAddress),
     },
-    { label: "Token contract", value: formatAddress(transfer.tokenAddress), title: transfer.tokenAddress },
+    {
+      label: "Token contract",
+      value: transfer.tokenAddress,
+      display: formatAddress(transfer.tokenAddress),
+    },
     { label: "Network", value: "Base (8453)" },
     { label: "Status", value: "Confirmed" },
     { label: "Date", value: fullDate },
     {
       label: "Transaction",
-      value: condensedTransactionHash(transfer.transactionHash),
-      title: transfer.transactionHash,
+      value: transfer.transactionHash,
+      display: condensedTransactionHash(transfer.transactionHash),
     },
     { label: "Block", value: transfer.blockNumber },
   ];

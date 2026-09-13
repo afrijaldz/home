@@ -4,12 +4,17 @@ import { getTransferAsset } from "@/shared/transfers/transfer-helpers";
 import {
   balancesSnapshotFixture,
   buildBalancesSnapshotFixture,
+  catalogHolding,
+  FIXTURE_CATALOG,
+  priced,
   ready,
   unavailableBalance,
 } from "./fixtures";
 import {
+  selectAssetCount,
   selectBalanceBaseUnits,
   selectCash,
+  selectMoneyGroups,
   selectSendable,
   selectVaultPositions,
 } from "./select";
@@ -74,6 +79,75 @@ describe("balance selectors", () => {
     const snapshot = buildBalancesSnapshotFixture({ region: "BR" });
     expect(selectCash(snapshot).map((entry) => entry.kind)).toEqual(["unsupported", "holding"]);
     expect(selectCash(snapshot)[0]).toMatchObject({ currency: "BRL", symbol: "BRZ" });
+  });
+
+  test("the cash group keeps the authored regional order even when USD is larger", () => {
+    const de = buildBalancesSnapshotFixture({
+      region: "DE",
+      registry: {
+        usdc: { balance: ready("5000000000"), value: priced("EUR", "460000") },
+        eurc: { balance: ready("1000000"), value: priced("EUR", "100") },
+      },
+    });
+    expect(selectMoneyGroups(de).cash.map((entry) => entry.kind === "holding" ? entry.holding.id : entry.key))
+      .toEqual([verifiedLocalCashAssets.EUR.id, "usdc"]);
+  });
+
+  test("classifies stablecoins as cash and every non-vault asset as one investments group", () => {
+    const snapshot = buildBalancesSnapshotFixture({
+      registry: {
+        usdc: { balance: ready("100"), value: priced("USD", "100") },
+        eurc: { balance: ready("200"), value: priced("USD", "200") },
+        idrx: { balance: ready("300"), value: priced("USD", "300") },
+        eth: { balance: ready("1"), value: priced("USD", "900") },
+        cbbtc: { balance: ready("1"), value: priced("USD", "800") },
+        nvdac: { balance: ready("1"), value: priced("USD", "700") },
+        "morpho-steakhouse-usdc": {
+          balance: ready("1"),
+          underlyingBalance: ready("1000000"),
+          value: priced("USD", "100"),
+        },
+      },
+      catalog: [catalogHolding(FIXTURE_CATALOG.priceMissing, "1", {
+        status: "unpriced",
+        reason: "price-unavailable",
+      })],
+    });
+
+    const groups = selectMoneyGroups(snapshot);
+    const cases = [
+      ["usdc", "cash"],
+      ["eurc", "cash"],
+      ["idrx", "cash"],
+      ["eth", "investments"],
+      ["cbbtc", "investments"],
+      ["nvdac", "investments"],
+      ["morpho-steakhouse-usdc", "excluded"],
+      [`catalog:${FIXTURE_CATALOG.priceMissing.address}`, "investments"],
+    ] as const;
+    const cashIds = new Set(groups.cash.flatMap((entry) =>
+      entry.kind === "holding" ? [entry.holding.id] : []
+    ));
+    const investmentIds = new Set(groups.investments.map((holding) => holding.id));
+    for (const [id, expected] of cases) {
+      expect(cashIds.has(id) ? "cash" : investmentIds.has(id) ? "investments" : "excluded")
+        .toBe(expected);
+    }
+    expect(groups.investments.at(-1)?.value.status).toBe("unpriced");
+  });
+
+  test("counts displayed cash and positive assets without vault shares or unavailable rows", () => {
+    const snapshot = buildBalancesSnapshotFixture({
+      registry: {
+        usdc: { balance: ready("0") },
+        eth: { balance: ready("1") },
+        cbbtc: { balance: unavailableBalance },
+        "morpho-steakhouse-usdc": { balance: ready("1"), underlyingBalance: ready("5") },
+      },
+      catalog: [catalogHolding(FIXTURE_CATALOG.priced, "1", priced("USD", "1"))],
+    });
+
+    expect(selectAssetCount(snapshot)).toBe(3);
   });
 
   test("returns null for unavailable and preserves successful zero", () => {

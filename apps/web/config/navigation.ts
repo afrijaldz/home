@@ -31,8 +31,8 @@ export function isShellPanelId(value: string): value is ShellPanelId {
 
 export function nestedHomePanelTitle(
   panel: ShellPanelId,
-): "Balances" | "Activity" | null {
-  if (panel === balancesPanelId) return "Balances";
+): "Your money" | "Activity" | null {
+  if (panel === balancesPanelId) return "Your money";
   if (panel === activityPanelId) return "Activity";
   return null;
 }

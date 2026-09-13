@@ -15,6 +15,7 @@ import {
   type ShellPanelId,
 } from "@/config/navigation";
 import type { RegionId, ResolutionSource } from "@/config/regions";
+import type { MoneyGroupId } from "@/config/shell-location";
 import type { VerifiedAccountSession } from "@/shared/account/session-types";
 import type { TransferAssetAvailability } from "@/shared/transfers/types";
 import { ActivityPage } from "./activity-panel";
@@ -41,6 +42,7 @@ export function DashboardShell({
   preferenceMessage,
   isPreferenceReady,
   accountAddress,
+  accountOwnerKey,
   selectRegion,
   signOut,
   paintedAssetBalances,
@@ -76,6 +78,7 @@ export function DashboardShell({
   preferenceMessage: string;
   isPreferenceReady: boolean;
   accountAddress: string | null;
+  accountOwnerKey: string | null;
   selectRegion: (region: RegionId) => void;
   signOut: () => void;
   paintedAssetBalances: HomeAssetBalancesPresentation;
@@ -84,7 +87,7 @@ export function DashboardShell({
   activitySession: VerifiedAccountSession | null;
   fetchActivity: FetchActivity;
   fetchOperations: (signal?: AbortSignal) => Promise<unknown>;
-  navigateTo: (panel: ShellPanelId) => void;
+  navigateTo: (panel: ShellPanelId, group?: MoneyGroupId | null) => void;
   urlAddMoney: boolean;
   urlReturnedFromProvider: boolean;
   urlSendFlow: boolean;
@@ -99,7 +102,7 @@ export function DashboardShell({
     <>
       <main
         ref={mainRef}
-        className="app-main-authenticated order-1 min-h-0 flex-1 overscroll-contain overflow-x-hidden overflow-y-auto bg-muted pb-[max(1rem,env(safe-area-inset-bottom))] scroll-pb-[max(1rem,env(safe-area-inset-bottom))] sm:order-2"
+        className="app-main-authenticated order-1 min-h-0 flex-1 overscroll-contain overflow-x-hidden overflow-y-auto bg-muted pb-4 scroll-pb-4 sm:order-2"
       >
         <div className="mx-auto w-full max-w-2xl px-4 py-4 sm:py-6">
         {isUnavailable ? (
@@ -122,6 +125,7 @@ export function DashboardShell({
               preferenceMessage={preferenceMessage}
               isPreferenceReady={isPreferenceReady}
               accountAddress={isVerified ? accountAddress : null}
+              accountOwnerKey={isVerified ? accountOwnerKey : null}
               onSignOut={signOut}
             />
           </div>
@@ -156,7 +160,7 @@ export function DashboardShell({
                     fetchActivity={fetchActivity}
                     fetchOperations={fetchOperations}
                     onOpenSave={() => navigateTo(savePanelId)}
-                    onOpenBalances={() => navigateTo(balancesPanelId)}
+                    onOpenBalances={(group) => navigateTo(balancesPanelId, group ?? null)}
                     onOpenActivity={() => navigateTo(activityPanelId)}
                     initialAddMoney={urlAddMoney}
                     returnedFromProvider={urlReturnedFromProvider}

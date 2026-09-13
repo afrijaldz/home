@@ -23,6 +23,7 @@ import {
   parseShellLocation,
   shellHref,
   withoutFlowHref,
+  type MoneyGroupId,
   type ShellFlow,
 } from "@/config/shell-location";
 import { useOptionalAppChrome } from "@/components/app-chrome";
@@ -48,6 +49,8 @@ import { useHomeRegion } from "./use-home-region";
 const loadingAssetBalances: HomeAssetBalancesPresentation = {
   status: "loading",
   displayTotal: null,
+  groups: [],
+  breakdown: [],
   rows: [],
 };
 
@@ -113,6 +116,7 @@ export function HomeShell({
   const balancesReturnScrollRef = useRef(0);
   const panelStageRef = useRef<HTMLElement>(null);
   const explicitLogoutRef = useRef(false);
+  const landingRedirectedRef = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(
     initialAccountOpen || (routeMode === "landing" && initialUrlIntent.account === "signin"),
   );
@@ -308,22 +312,43 @@ export function HomeShell({
     previousNavigationRef.current = activeNavigation;
     if (!shouldPreserveBalances && !preservesPossibleAssetReturn) {
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      mainRef.current?.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+      const targetGroup = isBalances ? urlIntent.location.group : null;
+      if (targetGroup) {
+        restoreFrame = window.requestAnimationFrame(() => {
+          document.getElementById(targetGroup)?.scrollIntoView({
+            block: "start",
+            behavior: reducedMotion ? "auto" : "smooth",
+          });
+        });
+      } else {
+        mainRef.current?.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+      }
     }
     return () => {
       if (restoreFrame !== null) window.cancelAnimationFrame(restoreFrame);
     };
-  }, [activeNavigation, disarmBalancesRestore, navigationRequest]);
+  }, [activeNavigation, disarmBalancesRestore, navigationRequest, urlIntent.location.group]);
 
   const activitySession: VerifiedAccountSession | null =
     isVerified && account.session?.smartAccount ? account.session : null;
+  useEffect(() => {
+    if (
+      routeMode === "landing" &&
+      account.verification !== null &&
+      parseShellLocation(new URLSearchParams(window.location.search)).account !== "signin" &&
+      !landingRedirectedRef.current
+    ) {
+      landingRedirectedRef.current = true;
+      router.replace("/dashboard", { scroll: false });
+    }
+  }, [account.verification, routeMode, router]);
   useEffect(() => {
     if (routeMode === "dashboard" && isSignedOut && !explicitLogoutRef.current) {
       router.replace("/?account=signin", { scroll: false });
     }
   }, [isSignedOut, routeMode, router]);
 
-  function navigateTo(nextNavigation: ShellPanelId) {
+  function navigateTo(nextNavigation: ShellPanelId, group: MoneyGroupId | null = null) {
     const skipHistory = activeNavigation === nextNavigation && !isAccountSettingsOpen;
     setIsAccountSettingsOpen(false);
     setSettingsOpenedInApp(false);
@@ -347,7 +372,7 @@ export function HomeShell({
     if (nextNavigation === balancesPanelId) setBalancesMounted(true);
     setNavigationRequest((request) => request + 1);
     if (!skipHistory) {
-      commitClientUrl(homePanelHref(shellPath, nextNavigation));
+      commitClientUrl(homePanelHref(shellPath, nextNavigation, group));
       setUrlIntent(readHomeInboundPanelState(new URLSearchParams(window.location.search)));
     }
   }
@@ -369,6 +394,7 @@ export function HomeShell({
       account: "settings",
       shelf: current.shelf,
       asset: current.asset,
+      group: current.group,
     }));
   }
 
@@ -397,19 +423,21 @@ export function HomeShell({
       panel: activeNavigation,
       shelf: current.shelf,
       asset: current.asset,
+      group: current.group,
     }), "replace");
   }
 
   function signOut() {
+    explicitLogoutRef.current = true;
     setIsAccountSettingsOpen(false);
     setForwardRequest((request) => request + 1);
     disarmBalancesRestore();
     setBalancesRevealReset((resetSignal) => resetSignal + 1);
-    if (routeMode === "dashboard") {
-      explicitLogoutRef.current = true;
-      router.replace("/", { scroll: false });
-    }
-    void account.signOut().catch(() => {});
+    void account.signOut()
+      .then(() => {
+        if (routeMode === "dashboard") router.replace("/", { scroll: false });
+      })
+      .catch(() => {});
   }
 
   const nestedChromeTitle = isAccountSettingsOpen
@@ -474,6 +502,7 @@ export function HomeShell({
           preferenceMessage={preferenceMessage}
           isPreferenceReady={isPreferenceReady}
           accountAddress={account.session?.smartAccount?.address ?? null}
+          accountOwnerKey={account.ownerKey}
           selectRegion={selectRegion}
           signOut={signOut}
           paintedAssetBalances={paintedAssetBalances}

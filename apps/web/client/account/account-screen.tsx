@@ -265,12 +265,13 @@ export function AccountSignInSheet({
         initialFocusRef={initialFocusRef}
         immediate
       >
-        <DrawerHeader className="flex-row items-center justify-between text-left">
-          <DrawerTitle id="account-sign-in-title">
+        <DrawerHeader className="grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 text-left">
+          <span />
+          <DrawerTitle id="account-sign-in-title" className="text-center text-base font-semibold leading-none">
             {flowId ? "Check your email" : "Sign in to Home"}
           </DrawerTitle>
           <Button
-            className="shrink-0"
+            className="size-11 shrink-0"
             size="icon-lg"
             variant="secondary"
             onClick={closeAndCancelAttempt}
@@ -279,13 +280,13 @@ export function AccountSignInSheet({
             <X aria-hidden="true" />
           </Button>
         </DrawerHeader>
-        <MoneyModalBody className="pt-4">
+        <MoneyModalBody>
           {signInBlocked ? (
             <SignInBlockedPanel reason={signInAvailability === "provider-unavailable" ? "provider-unavailable" : "unconfigured"} />
           ) : (
             <>
-              {message ? <StatusMessage className="mt-6">{message}</StatusMessage> : null}
-              {authError ? <StatusMessage className="mt-6" tone="error" role="alert">{authError}</StatusMessage> : null}
+              {message ? <StatusMessage className="mt-4">{message}</StatusMessage> : null}
+              {authError ? <StatusMessage className="mt-4" tone="error" role="alert">{authError}</StatusMessage> : null}
               <SignInStatus
                 phase={isProviderHandoff ? null : activeBaseAccountPhase}
                 cleaningUp={isCleaningUp}

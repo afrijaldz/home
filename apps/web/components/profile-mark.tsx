@@ -2,11 +2,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { publicQueryKey, useHomeQuery } from "@/client/query/query-client";
-import {
-  fetchBasenameProfile,
-  profileGlyph,
-} from "@/client/account/basename-profile";
+import { profileGlyph } from "@/client/account/basename-profile";
+import { useBasenameProfile } from "@/client/account/use-basename-profile";
 
 export function ProfileMark({
   status,
@@ -46,14 +43,10 @@ function ProfileMarkButton({
   disabled?: boolean;
   onClick?: () => void;
 }) {
-  const profile = useHomeQuery({
-    queryKey: address
-      ? publicQueryKey("basename", address.toLowerCase())
-      : publicQueryKey("basename", "disabled"),
-    enabled: status === "ready" && Boolean(address),
-    staleTime: 5 * 60_000,
-    retry: false,
-    queryFn: ({ signal }) => fetchBasenameProfile(address, fetch, signal),
+  const profile = useBasenameProfile({
+    ownerKey,
+    address,
+    enabled: status === "ready",
   });
   const basename = profile.data?.name ?? null;
   const photoUrl = profile.data?.avatarUrl ?? null;
