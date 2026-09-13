@@ -104,7 +104,11 @@ export function createPostgresSqlExecutor(
         connectionTimeoutMillis: 10_000,
       };
       pool = options.poolFactory?.(poolConfig) ?? new Pool(poolConfig);
-      pool.on("error", () => {});
+      pool.on("error", (error) => {
+        // Idle clients can be reset between serverless invocations. Log only
+        // the SQLSTATE so the process survives without leaking connection details.
+        console.warn("postgres idle client error", (error as { code?: string }).code ?? "unknown");
+      });
     }
     return pool;
   };
