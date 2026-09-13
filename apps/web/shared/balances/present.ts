@@ -128,10 +128,10 @@ export function presentBalances(
       : noCurrency || unavailable
         ? "unavailable"
         : "complete",
-    statusLabel: state.snapshot.stale === true
-      ? `Updated ${formatRelativeTime(state.snapshot.fetchedAt, nowMs)}`
-      : noCurrency
-        ? "Choose a country in Account to set how money is shown"
+    statusLabel: noCurrency
+      ? "Choose a country in Account to set how money is shown"
+      : state.snapshot.stale === true
+        ? `Updated ${formatRelativeTime(state.snapshot.fetchedAt, nowMs)}`
         : unavailable
           ? "Balance unavailable"
           : undefined,

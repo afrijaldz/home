@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 export const showSmallBalancesPreferenceKey = "home.show-small-balances.v1";
-const preferenceEventName = "home:show-small-balances-change";
+
+const preferenceListeners = new Set<() => void>();
 
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 type PreferenceStorageGetter<
   Method extends keyof PreferenceStorage = keyof PreferenceStorage,
 > = () => Pick<PreferenceStorage, Method>;
 
-export function readShowSmallBalancesPreference(
+function readShowSmallBalancesPreference(
   getStorage: PreferenceStorageGetter<"getItem">,
 ): boolean {
   try {
@@ -20,7 +21,7 @@ export function readShowSmallBalancesPreference(
   }
 }
 
-export function writeShowSmallBalancesPreference(
+function writeShowSmallBalancesPreference(
   getStorage: PreferenceStorageGetter<"setItem">,
   value: boolean,
 ): boolean {
@@ -32,27 +33,41 @@ export function writeShowSmallBalancesPreference(
   }
 }
 
+function notifyPreferenceListeners() {
+  for (const listener of preferenceListeners) listener();
+}
+
+function onStorage(event: StorageEvent) {
+  if (event.key !== null && event.key !== showSmallBalancesPreferenceKey) return;
+  notifyPreferenceListeners();
+}
+
+function subscribeToShowSmallBalancesPreference(listener: () => void) {
+  if (preferenceListeners.size === 0) window.addEventListener("storage", onStorage);
+  preferenceListeners.add(listener);
+  return () => {
+    preferenceListeners.delete(listener);
+    if (preferenceListeners.size === 0) window.removeEventListener("storage", onStorage);
+  };
+}
+
+function getShowSmallBalancesPreference() {
+  return readShowSmallBalancesPreference(() => window.localStorage);
+}
+
+function getServerShowSmallBalancesPreference() {
+  return false;
+}
+
 export function useShowSmallBalances(): readonly [boolean, (value: boolean) => void] {
-  const [value, setValue] = useState(false);
-
-  useEffect(() => {
-    const persisted = readShowSmallBalancesPreference(() => window.localStorage);
-    const hydrationFrame = window.requestAnimationFrame(() => setValue(persisted));
-    const onPreferenceChange = (event: Event) => {
-      if (!(event instanceof CustomEvent) || typeof event.detail !== "boolean") return;
-      setValue(event.detail);
-    };
-    window.addEventListener(preferenceEventName, onPreferenceChange);
-    return () => {
-      window.cancelAnimationFrame(hydrationFrame);
-      window.removeEventListener(preferenceEventName, onPreferenceChange);
-    };
-  }, []);
-
+  const value = useSyncExternalStore(
+    subscribeToShowSmallBalancesPreference,
+    getShowSmallBalancesPreference,
+    getServerShowSmallBalancesPreference,
+  );
   const update = useCallback((next: boolean) => {
-    setValue(next);
     writeShowSmallBalancesPreference(() => window.localStorage, next);
-    window.dispatchEvent(new CustomEvent(preferenceEventName, { detail: next }));
+    notifyPreferenceListeners();
   }, []);
 
   return [value, update] as const;
