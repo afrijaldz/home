@@ -18,7 +18,7 @@ let executor: SqlExecutor;
 describePostgres("Postgres webhook subscription production contract", () => {
   beforeAll(async () => {
     client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
-    const migration = await readFile(resolve(import.meta.dir, "../db/migrations/003_balances.sql"), "utf8");
+    const migration = await readFile(resolve(import.meta.dir, "../db/migrations/004_balances.sql"), "utf8");
     await client.unsafe("DROP TABLE IF EXISTS webhook_subscriptions");
     await client.unsafe(migration);
     executor = bunExecutor(client);

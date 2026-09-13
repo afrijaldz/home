@@ -19,7 +19,7 @@ describePostgres("PostgresBalanceSnapshotStore production contract", () => {
   beforeAll(async () => {
     client = new Bun.SQL(connectionString!) as unknown as BunSqlClient;
     const migration = await readFile(
-      resolve(import.meta.dir, "../db/migrations/003_balances.sql"),
+      resolve(import.meta.dir, "../db/migrations/004_balances.sql"),
       "utf8",
     );
     await client.unsafe("DROP TABLE IF EXISTS balance_snapshots");
