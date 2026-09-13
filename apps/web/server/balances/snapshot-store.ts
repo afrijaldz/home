@@ -71,8 +71,8 @@ export class PostgresBalanceSnapshotStore implements BalanceSnapshotStore {
   async markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void> {
     if (addresses.length === 0) return;
     await this.sql.query(
-      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address = ANY($2)",
-      [chainId, addresses.map((address) => address.toLowerCase()), at.toISOString()],
+      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address = ANY($2::text[])",
+      [chainId, postgresTextArray(addresses), at.toISOString()],
     );
   }
 
@@ -120,6 +120,10 @@ function fromDatabaseRow(row: DatabaseRow): BalanceSnapshotRow {
 
 export function isHostedRuntime(env: Readonly<Record<string, string | undefined>>): boolean {
   return env.VERCEL_ENV === "production" || env.VERCEL_ENV === "preview";
+}
+
+function postgresTextArray(values: readonly string[]): string {
+  return `{${values.map((value) => `"${value.toLowerCase()}"`).join(",")}}`;
 }
 
 function timestamp(value: unknown): string {
