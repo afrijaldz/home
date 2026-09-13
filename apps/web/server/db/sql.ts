@@ -29,8 +29,9 @@ export function isUniqueViolation(error: unknown): boolean {
   return value.code === "23505" || value.errno === "23505" || value.sqlState === "23505";
 }
 
+type DriverQueryResult = { rows?: unknown[]; rowCount?: number | null };
 type Queryable = {
-  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount?: number | null }>;
+  query: (text: string, values?: unknown[]) => Promise<DriverQueryResult | DriverQueryResult[]>;
 };
 
 type PoolClientLike = Queryable & Pick<PoolClient, "release">;
@@ -64,9 +65,11 @@ function wrapQueryable(
       options: SqlQueryOptions = {},
     ) {
       throwIfSqlAborted(options.signal);
-      const result = await queryable.query(text, values);
+      const driverResult = await queryable.query(text, values);
       throwIfSqlAborted(options.signal);
-      return { rows: result.rows as T[], rowCount: result.rowCount ?? result.rows.length };
+      const result = Array.isArray(driverResult) ? driverResult.at(-1) : driverResult;
+      const rows = result?.rows ?? [];
+      return { rows: rows as T[], rowCount: result?.rowCount ?? rows.length };
     },
     transaction<T>(fn: (tx: SqlExecutor) => Promise<T>) {
       return beginTransaction(fn as (tx: SqlExecutor) => Promise<unknown>) as Promise<T>;

@@ -15,6 +15,7 @@ import { finalizeTradeCalls, type PendingTradeConfirmation } from "./kinds/trade
 import { createSmartAccountSignatureVerifier } from "./kinds/trade/signer";
 import type { SmartAccountSignatureVerifier } from "@/shared/trading/server-types";
 import { emitServerEvent } from "@/server/observability/log";
+import { fireAndForgetBalanceSignal } from "@/server/balances/signal";
 import {
   createActionHandleResolver,
   type ActionHandleResolver,
@@ -411,15 +412,6 @@ function privateError(code: string, message: string, status: number): Response {
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function fireAndForgetBalanceSignal(run: () => Promise<void> | undefined): void {
-  try {
-    const pending = run();
-    if (pending) void pending.catch(() => console.error("Balance invalidation signal failed."));
-  } catch {
-    console.error("Balance invalidation signal failed.");
-  }
 }
 
 function isPendingTradeConfirmation(pending: PendingAction): pending is PendingAction & PendingTradeConfirmation {

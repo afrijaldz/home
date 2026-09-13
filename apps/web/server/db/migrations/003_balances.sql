@@ -11,3 +11,11 @@ create table if not exists balance_snapshots (
   coverage     jsonb not null,
   primary key (chain_id, address)
 );
+
+create table if not exists webhook_subscriptions (
+  subscription_id text primary key,
+  secret text not null,
+  target text not null,
+  event_type text not null,
+  created_at timestamptz not null default now()
+);

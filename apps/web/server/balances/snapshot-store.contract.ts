@@ -43,6 +43,15 @@ export function balanceSnapshotStoreContract(options: {
       });
     });
 
+    test("preserves milliseconds so a same-second stale mark remains signaled", async () => {
+      await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
+      await store.markStale(8453, ADDRESS, new Date("2026-09-13T12:00:10.500Z"));
+      expect(await store.get(8453, ADDRESS)).toMatchObject({
+        observedAt: "2026-09-13T12:00:10.000Z",
+        staleAt: "2026-09-13T12:00:10.500Z",
+      });
+    });
+
     test("signal writers touch only their column", async () => {
       await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
       const original = (await store.get(8453, ADDRESS))!;
@@ -54,6 +63,17 @@ export function balanceSnapshotStoreContract(options: {
         ...stale,
         hotUntil: "2026-09-13T12:01:20.000Z",
       });
+    });
+
+    test("marks multiple addresses stale in one store operation", async () => {
+      await store.putObservation(observation("10", "2026-09-13T12:00:10.000Z"));
+      await store.putObservation({
+        ...observation("10", "2026-09-13T12:00:10.000Z"),
+        address: OTHER,
+      });
+      await store.markStaleMany(8453, [ADDRESS, OTHER], new Date("2026-09-13T12:00:20.000Z"));
+      expect((await store.get(8453, ADDRESS))?.staleAt).toBe("2026-09-13T12:00:20.000Z");
+      expect((await store.get(8453, OTHER))?.staleAt).toBe("2026-09-13T12:00:20.000Z");
     });
 
     test("signals no-op when no observation row exists", async () => {

@@ -2,10 +2,13 @@ import "server-only";
 
 import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { emitServerEvent } from "@/server/observability/log";
+import {
+  getWebhookSubscriptionStore,
+  type WebhookSubscriptionStore,
+} from "./webhook-subscription-store";
 
 export const CDP_WEBHOOKS_HOST = "api.cdp.coinbase.com" as const;
 export const CDP_WEBHOOK_SUBSCRIPTIONS_PATH = "/platform/v2/data/webhooks/subscriptions" as const;
-/** Current subscription API enum; deliveries use the wallet.activity event family. */
 export const CDP_ACTIVITY_EVENT_TYPE = "wallet_activity" as const;
 export const CDP_ACTIVITY_NETWORK = "base-mainnet" as const;
 export const CDP_SUBSCRIPTION_ADDRESS_LIMIT = 100;
@@ -29,26 +32,30 @@ type Subscription = {
 
 export function createCdpWebhookSubscriptions(options: {
   env?: Environment;
+  store?: WebhookSubscriptionStore;
   fetchImpl?: FetchLike;
   generateJwtImpl?: JwtGenerator;
   now?: () => number;
   logFailure?: (reason: string) => void;
 } = {}): BalanceWebhookSubscriptions {
   const env = options.env ?? process.env;
+  const store = options.store ?? getWebhookSubscriptionStore(env);
   const fetchImpl = options.fetchImpl ?? fetch;
   const generateJwtImpl = options.generateJwtImpl ?? generateJwt;
   const now = options.now ?? Date.now;
   const logFailure = options.logFailure ?? observeSubscriptionFailure;
+  const origin = deploymentWebhookOrigin(env);
   let cached: { at: number; subscriptions: Subscription[] } | null = null;
   let listing: Promise<Subscription[]> | null = null;
+  let memoryDisabledLogged = false;
 
-  async function list(): Promise<Subscription[]> {
+  async function list(force = false): Promise<Subscription[]> {
     const current = now();
-    if (cached && current - cached.at <= CDP_SUBSCRIPTION_LIST_TTL_MS) {
+    if (!force && cached && current - cached.at <= CDP_SUBSCRIPTION_LIST_TTL_MS) {
       return cached.subscriptions;
     }
-    if (listing) return listing;
-    listing = requestJson({
+    if (!force && listing) return listing;
+    const pending = requestJson({
       env,
       fetchImpl,
       generateJwtImpl,
@@ -57,35 +64,86 @@ export function createCdpWebhookSubscriptions(options: {
     }).then(parseSubscriptions).then((subscriptions) => {
       cached = { at: now(), subscriptions };
       return subscriptions;
-    }).finally(() => { listing = null; });
-    return listing;
+    });
+    if (!force) {
+      listing = pending.finally(() => { listing = null; });
+      return listing;
+    }
+    return pending;
+  }
+
+  function candidates(subscriptions: Subscription[]): Subscription[] {
+    return subscriptions.filter((subscription) =>
+      isBaseActivitySubscription(subscription) &&
+      targetOrigin(subscription.targetUrl) === origin &&
+      subscription.addresses.length < CDP_SUBSCRIPTION_ADDRESS_LIMIT
+    );
+  }
+
+  async function updateCandidate(address: `0x${string}`): Promise<boolean> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const subscriptions = await list(true);
+      if (subscriptions.some((subscription) =>
+        isBaseActivitySubscription(subscription) &&
+        targetOrigin(subscription.targetUrl) === origin &&
+        subscription.addresses.includes(address)
+      )) return true;
+      const target = candidates(subscriptions)[0];
+      if (!target) return false;
+      const addresses = [...target.addresses, address];
+      await requestJson({
+        env,
+        fetchImpl,
+        generateJwtImpl,
+        method: "PUT",
+        path: `${CDP_WEBHOOK_SUBSCRIPTIONS_PATH}/${encodeURIComponent(target.id)}`,
+        body: subscriptionRequest(target, addresses),
+      });
+      const confirmed = await list(true);
+      if (confirmed.some((subscription) =>
+        subscription.id === target.id && subscription.addresses.includes(address)
+      )) return true;
+    }
+    throw new Error("subscription-update-not-confirmed");
   }
 
   return {
     async ensureAddressSubscribed(address) {
+      if (!origin) return;
+      if (!store.persistent) {
+        if (!memoryDisabledLogged) {
+          memoryDisabledLogged = true;
+          logFailure("subscription-persistence-unavailable");
+        }
+        return;
+      }
       try {
         const normalized = normalizeAddress(address);
-        const subscriptions = (await list()).filter(isBaseActivitySubscription);
-        if (subscriptions.some((subscription) => subscription.addresses.includes(normalized))) return;
-        const target = subscriptions.find((subscription) =>
-          subscription.addresses.length < CDP_SUBSCRIPTION_ADDRESS_LIMIT
+        const subscriptions = await list();
+        const matching = subscriptions.filter((subscription) =>
+          isBaseActivitySubscription(subscription) &&
+          targetOrigin(subscription.targetUrl) === origin
         );
-        if (!target) throw new Error("no-subscription-with-room");
-        target.addresses = [...target.addresses, normalized];
-        target.labels = {
-          ...target.labels,
-          network: CDP_ACTIVITY_NETWORK,
-          wallet_addresses: target.addresses.join(","),
-        };
-        await requestJson({
+        if (matching.some((subscription) => subscription.addresses.includes(normalized))) return;
+        if (candidates(subscriptions).length > 0 && await updateCandidate(normalized)) return;
+
+        const target = new URL("/api/webhooks/cdp", origin).toString();
+        const payload = await requestJson({
           env,
           fetchImpl,
           generateJwtImpl,
-          method: "PUT",
-          path: `${CDP_WEBHOOK_SUBSCRIPTIONS_PATH}/${encodeURIComponent(target.id)}`,
-          body: subscriptionRequest(target),
+          method: "POST",
+          path: CDP_WEBHOOK_SUBSCRIPTIONS_PATH,
+          body: createSubscriptionRequest(target, [normalized]),
         });
-        cached = { at: now(), subscriptions };
+        const created = parseCreatedSubscription(payload);
+        if (!created) throw new Error("cdp-create-response-missing-secret");
+        await store.insert({
+          subscriptionId: created.id,
+          secret: created.secret,
+          target,
+          eventType: CDP_ACTIVITY_EVENT_TYPE,
+        });
       } catch (error) {
         logFailure(error instanceof Error ? error.message : "subscription-failed");
       }
@@ -93,40 +151,12 @@ export function createCdpWebhookSubscriptions(options: {
   };
 }
 
-export async function createCdpActivitySubscription(options: {
-  origin: string;
-  addresses: readonly `0x${string}`[];
-  env?: Environment;
-  fetchImpl?: FetchLike;
-  generateJwtImpl?: JwtGenerator;
-}): Promise<{ id: string; secret: string }> {
-  const origin = new URL(options.origin);
-  if (origin.protocol !== "https:" && origin.hostname !== "localhost") {
-    throw new Error("HOME_WEBHOOK_ORIGIN must be HTTPS outside localhost.");
-  }
-  const addresses = [...new Set(options.addresses.map(normalizeAddress))];
-  if (addresses.length === 0 || addresses.length > CDP_SUBSCRIPTION_ADDRESS_LIMIT) {
-    throw new Error("A CDP activity subscription requires 1-100 addresses.");
-  }
-  const payload = await requestJson({
-    env: options.env ?? process.env,
-    fetchImpl: options.fetchImpl ?? fetch,
-    generateJwtImpl: options.generateJwtImpl ?? generateJwt,
-    method: "POST",
-    path: CDP_WEBHOOK_SUBSCRIPTIONS_PATH,
-    body: {
-      eventTypes: [CDP_ACTIVITY_EVENT_TYPE],
-      target: { url: new URL("/api/webhooks/cdp", origin).toString() },
-      labels: {
-        network: CDP_ACTIVITY_NETWORK,
-        wallet_addresses: addresses.join(","),
-      },
-      isEnabled: true,
-    },
-  });
-  const parsed = parseCreatedSubscription(payload);
-  if (!parsed) throw new Error("CDP create subscription response omitted id or secret.");
-  return parsed;
+export function deploymentWebhookOrigin(env: Environment): string | null {
+  const override = env.HOME_WEBHOOK_ORIGIN?.trim();
+  if (override) return validOrigin(override);
+  if (env.VERCEL_ENV !== "production") return null;
+  const productionUrl = env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  return productionUrl ? validOrigin(`https://${productionUrl}`) : null;
 }
 
 async function requestJson(options: {
@@ -138,8 +168,7 @@ async function requestJson(options: {
   body?: unknown;
 }): Promise<unknown> {
   const apiKeyId = options.env.CDP_API_KEY_ID?.trim();
-  const secretName = ["CDP", "API", "KEY", "SECRET"].join("_");
-  const apiKeySecret = options.env[secretName]?.trim();
+  const apiKeySecret = options.env.CDP_API_KEY_SECRET?.trim();
   if (!apiKeyId || !apiKeySecret) throw new Error("cdp-api-key-not-configured");
   const token = await options.generateJwtImpl({
     apiKeyId,
@@ -225,25 +254,54 @@ function parseCreatedSubscription(value: unknown): { id: string; secret: string 
   return id && secret ? { id, secret } : null;
 }
 
-function subscriptionRequest(subscription: Subscription) {
+function createSubscriptionRequest(target: string, addresses: readonly `0x${string}`[]) {
+  return {
+    eventTypes: [CDP_ACTIVITY_EVENT_TYPE],
+    target: { url: target },
+    labels: {
+      network: CDP_ACTIVITY_NETWORK,
+      wallet_addresses: addresses.join(","),
+    },
+    isEnabled: true,
+  };
+}
+
+function subscriptionRequest(subscription: Subscription, addresses: readonly `0x${string}`[]) {
   return {
     eventTypes: subscription.eventTypes,
     target: { url: subscription.targetUrl },
-    labels: subscription.labels,
+    labels: {
+      ...subscription.labels,
+      network: CDP_ACTIVITY_NETWORK,
+      wallet_addresses: addresses.join(","),
+    },
     isEnabled: subscription.isEnabled,
   };
 }
 
 function isBaseActivitySubscription(subscription: Subscription): boolean {
   return subscription.isEnabled &&
-    (subscription.eventTypes.includes(CDP_ACTIVITY_EVENT_TYPE) ||
-      subscription.eventTypes.includes("wallet.activity.multi")) &&
+    subscription.eventTypes.includes(CDP_ACTIVITY_EVENT_TYPE) &&
     subscription.labels.network === CDP_ACTIVITY_NETWORK;
 }
 
 function normalizeAddress(address: string): `0x${string}` {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error("invalid-subscription-address");
   return address.toLowerCase() as `0x${string}`;
+}
+
+function validOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.hostname !== "localhost") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function targetOrigin(value: string): string | null {
+  try { return new URL(value).origin; } catch { return null; }
 }
 
 function stringField(value: Record<string, unknown>, ...keys: string[]): string | null {
@@ -254,7 +312,9 @@ function stringField(value: Record<string, unknown>, ...keys: string[]): string 
 function observeSubscriptionFailure(reason: string): void {
   emitServerEvent("balances-webhook-subscription", {
     route: "/api/balances",
-    code: "SUBSCRIPTION_FAILED",
+    code: reason === "subscription-persistence-unavailable"
+      ? "SUBSCRIPTION_DISABLED"
+      : "SUBSCRIPTION_FAILED",
     outcome: "unavailable",
     provider: reason,
     durationMs: 0,

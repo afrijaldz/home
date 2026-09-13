@@ -25,6 +25,19 @@ function signed(
     : `t=${timestamp},v0=${digest}`;
 }
 
+
+function subscriptionStore() {
+  return {
+    list: async () => [{
+      subscriptionId: "subscription-1",
+      secret: SECRET,
+      target: "https://home.example/api/webhooks/cdp",
+      eventType: "wallet_activity",
+      createdAt: NOW.toISOString(),
+    }],
+  };
+}
+
 function body(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
@@ -52,15 +65,71 @@ describe("CDP balance activity webhook", () => {
       data: { network: "base-mainnet", matchedAddress: ADDRESS.toUpperCase().replace("0X", "0x") },
     });
     const headers = new Headers({ "content-type": "application/json" });
-    const response = await createCdpWebhookHandler({ store, env: { CDP_WEBHOOK_SECRET: SECRET }, now: () => NOW })(raw, signed(raw, undefined, version, headers), headers);
+    const response = await createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW })(raw, signed(raw, undefined, version, headers), headers);
     expect(response.status).toBe(200);
     expect((await store.get(8453, ADDRESS))?.staleAt).toBe(NOW.toISOString());
+  });
+
+  test("accepts any valid v1 value and uppercase signed header names", async () => {
+    const store = await seededStore();
+    const raw = body({ eventType: "wallet.activity.multi", data: { address: ADDRESS } });
+    const timestamp = Math.floor(NOW.getTime() / 1000);
+    const headers = new Headers({ "Content-Type": "application/json" });
+    const headerNames = "Content-Type";
+    const digest = createHmac("sha256", SECRET)
+      .update(Buffer.concat([
+        Buffer.from(`${timestamp}.${headerNames}.application/json.`),
+        Buffer.from(raw),
+      ]))
+      .digest("hex");
+    const signature = `t=${timestamp},h=${headerNames},v1=${"0".repeat(64)},v1=${digest}`;
+    const handler = createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW });
+    expect((await handler(raw, signature, headers)).status).toBe(200);
+  });
+
+  test("rejects when no stored subscription secret exists", async () => {
+    const store = await seededStore();
+    const raw = body({ eventType: "wallet.activity.multi", data: { address: ADDRESS } });
+    const handler = createCdpWebhookHandler({
+      store,
+      subscriptions: { list: async () => [] },
+      now: () => NOW,
+    });
+    expect((await handler(raw, signed(raw))).status).toBe(401);
+  });
+
+  test("re-reads stored subscriptions once for an unknown identified id", async () => {
+    const store = await seededStore();
+    let reads = 0;
+    const raw = body({
+      subscriptionId: "subscription-2",
+      eventType: "wallet.activity.multi",
+      data: { address: ADDRESS },
+    });
+    const handler = createCdpWebhookHandler({
+      store,
+      subscriptions: {
+        list: async () => {
+          reads += 1;
+          return reads === 1 ? [] : [{
+            subscriptionId: "subscription-2",
+            secret: SECRET,
+            target: "https://home.example/api/webhooks/cdp",
+            eventType: "wallet_activity",
+            createdAt: NOW.toISOString(),
+          }];
+        },
+      },
+      now: () => NOW,
+    });
+    expect((await handler(raw, signed(raw))).status).toBe(200);
+    expect(reads).toBe(2);
   });
 
   test("rejects invalid signatures and timestamps outside the replay window", async () => {
     const store = await seededStore();
     const raw = body({ eventType: "wallet.activity.detected", data: { address: ADDRESS } });
-    const handler = createCdpWebhookHandler({ store, env: { CDP_WEBHOOK_SECRET: SECRET }, now: () => NOW });
+    const handler = createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW });
     expect((await handler(raw, "t=1,v1=bad")).status).toBe(401);
     const old = Math.floor(NOW.getTime() / 1000) - 301;
     expect((await handler(raw, signed(raw, old))).status).toBe(401);
@@ -70,7 +139,7 @@ describe("CDP balance activity webhook", () => {
   test("duplicate delivery is harmless", async () => {
     const store = await seededStore();
     const raw = body({ eventType: "wallet.activity.multi", data: { matchedAddress: ADDRESS, nested: { address: ADDRESS } } });
-    const handler = createCdpWebhookHandler({ store, env: { CDP_WEBHOOK_SECRET: SECRET }, now: () => NOW });
+    const handler = createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW });
     await handler(raw, signed(raw));
     await handler(raw, signed(raw));
     expect((await store.get(8453, ADDRESS))?.staleAt).toBe(NOW.toISOString());
@@ -79,7 +148,7 @@ describe("CDP balance activity webhook", () => {
   test("unknown event types are accepted and ignored", async () => {
     const store = await seededStore();
     const raw = body({ eventType: "other.event", data: { address: ADDRESS } });
-    const response = await createCdpWebhookHandler({ store, env: { CDP_WEBHOOK_SECRET: SECRET }, now: () => NOW })(raw, signed(raw));
+    const response = await createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW })(raw, signed(raw));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ accepted: true });
     expect((await store.get(8453, ADDRESS))?.staleAt).toBeNull();
@@ -88,7 +157,7 @@ describe("CDP balance activity webhook", () => {
   test("a signed malformed body is rejected without throwing", async () => {
     const store = await seededStore();
     const raw = new TextEncoder().encode("{not-json");
-    const response = await createCdpWebhookHandler({ store, env: { CDP_WEBHOOK_SECRET: SECRET }, now: () => NOW })(raw, signed(raw));
+    const response = await createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW })(raw, signed(raw));
     expect(response.status).toBe(400);
   });
 

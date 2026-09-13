@@ -3,6 +3,7 @@ import "server-only";
 import { getSqlExecutor, type SqlExecutor } from "@/server/db/sql";
 import type { BalancesCoverage } from "@/shared/balances/types";
 import type { ReadHolding } from "./types";
+import { emitServerEvent } from "@/server/observability/log";
 import { MemoryBalanceSnapshotStore } from "./memory-snapshot-store";
 
 export type BalanceSnapshotRow = {
@@ -25,6 +26,7 @@ export interface BalanceSnapshotStore {
   putObservation(row: BalanceObservation): Promise<boolean>;
   /** Signals intentionally no-op before the first observation exists. */
   markStale(chainId: number, address: `0x${string}`, at: Date): Promise<void>;
+  markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void>;
   /** Signals intentionally no-op before the first observation exists. */
   markHot(chainId: number, address: `0x${string}`, until: Date): Promise<void>;
 }
@@ -63,9 +65,14 @@ export class PostgresBalanceSnapshotStore implements BalanceSnapshotStore {
   }
 
   async markStale(chainId: number, address: `0x${string}`, at: Date): Promise<void> {
+    await this.markStaleMany(chainId, [address], at);
+  }
+
+  async markStaleMany(chainId: number, addresses: readonly `0x${string}`[], at: Date): Promise<void> {
+    if (addresses.length === 0) return;
     await this.sql.query(
-      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address=$2",
-      [chainId, address.toLowerCase(), at.toISOString()],
+      "UPDATE balance_snapshots SET stale_at=GREATEST(stale_at,$3) WHERE chain_id=$1 AND address = ANY($2::text[])",
+      [chainId, postgresTextArray(addresses), at.toISOString()],
     );
   }
 
@@ -85,6 +92,14 @@ export function getBalanceSnapshotStore(
   runtimeStore = env.DATABASE_URL?.trim()
     ? new PostgresBalanceSnapshotStore(getSqlExecutor(env))
     : new MemoryBalanceSnapshotStore();
+  if (!env.DATABASE_URL?.trim() && isHostedRuntime(env)) {
+    emitServerEvent("balances-store", {
+      route: "/api/balances",
+      code: "BALANCE_MEMORY_FALLBACK",
+      outcome: "unavailable",
+      durationMs: 0,
+    });
+  }
   return runtimeStore;
 }
 
@@ -95,12 +110,26 @@ function fromDatabaseRow(row: DatabaseRow): BalanceSnapshotRow {
     blockNumber: String(row.block_number),
     blockHash: String(row.block_hash).toLowerCase() as `0x${string}`,
     blockTimestamp: String(row.block_timestamp),
-    observedAt: new Date(String(row.observed_at)).toISOString(),
-    staleAt: row.stale_at === null ? null : new Date(String(row.stale_at)).toISOString(),
-    hotUntil: row.hot_until === null ? null : new Date(String(row.hot_until)).toISOString(),
+    observedAt: timestamp(row.observed_at),
+    staleAt: row.stale_at === null ? null : timestamp(row.stale_at),
+    hotUntil: row.hot_until === null ? null : timestamp(row.hot_until),
     holdings: parseJson<ReadHolding[]>(row.holdings),
     coverage: parseJson<BalancesCoverage>(row.coverage),
   };
+}
+
+export function isHostedRuntime(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env.VERCEL_ENV === "production" || env.VERCEL_ENV === "preview";
+}
+
+function postgresTextArray(values: readonly string[]): string {
+  return `{${values.map((value) => `"${value.toLowerCase()}"`).join(",")}}`;
+}
+
+function timestamp(value: unknown): string {
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(String(value)).toISOString();
 }
 
 function parseJson<T>(value: unknown): T {
