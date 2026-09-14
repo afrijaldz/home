@@ -211,6 +211,7 @@ export function createBalancesService(dependencies: Dependencies = {}) {
       resolveBalances(registryRead, unavailableEnumeration()));
     return {
       ...withEnrichment,
+      observedAt: row.observedAt,
       holdings: [
         ...withEnrichment.holdings.filter((holding) => holding.source === "registry"),
         ...row.holdings.filter((holding) => holding.source !== "registry"),

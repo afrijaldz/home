@@ -74,7 +74,7 @@ function priced(rows: BalancesRead["holdings"]): Holding[] {
 
 function setup(options: {
   store?: MemoryBalanceSnapshotStore;
-  now?: string;
+  now?: string | (() => Date);
   registryRead?: () => Promise<BalancesRead>;
   enumerate?: (cursor?: string | null) => Promise<BalancesEnumeration>;
 }) {
@@ -85,7 +85,9 @@ function setup(options: {
   let clock = 0;
   const service = createBalancesService({
     store,
-    now: () => new Date(options.now ?? "2026-09-13T12:00:30.000Z"),
+    now: typeof options.now === "function"
+      ? options.now
+      : () => new Date(options.now ?? "2026-09-13T12:00:30.000Z"),
     nowMs: () => clock++,
     log: (event) => events.push(event),
     readUniverse: async () => ({ entries: [] }),
@@ -192,7 +194,7 @@ describe("balance observations", () => {
     expect(fixture.enumerations()).toBe(1);
   });
 
-  test("hot rows re-read registry only and retain catalog rows", async () => {
+  test("hot rows re-read registry only and retain catalog rows without moving observedAt", async () => {
     const fixture = setup({});
     await fixture.store.putObservation(observation());
     await fixture.store.markHot(8453, owner, new Date("2026-09-13T12:01:00.000Z"));
@@ -200,7 +202,28 @@ describe("balance observations", () => {
     expect(fixture.reads()).toBe(1);
     expect(fixture.enumerations()).toBe(0);
     expect(snapshot.holdings.map((holding) => holding.source)).toEqual(["registry", "catalog"]);
-    expect(snapshot.fetchedAt).toBe("2026-09-13T12:00:30.000Z");
+    expect(snapshot.fetchedAt).toBe(observedAt);
+    expect((await fixture.store.get(8453, owner))?.observedAt).toBe(observedAt);
+  });
+
+  test("continuous hot reads still run a full observation after 120 seconds", async () => {
+    let current = new Date("2026-09-13T12:00:30.000Z");
+    const fixture = setup({
+      now: () => current,
+      registryRead: async () => read("11", current.toISOString(), [registry]),
+    });
+    await fixture.store.putObservation(observation());
+    await fixture.store.markHot(8453, owner, new Date("2026-09-13T12:05:00.000Z"));
+
+    await fixture.service(owner, "US");
+    current = new Date("2026-09-13T12:01:30.000Z");
+    await fixture.service(owner, "US");
+    expect((await fixture.store.get(8453, owner))?.observedAt).toBe(observedAt);
+    expect(fixture.enumerations()).toBe(0);
+
+    current = new Date("2026-09-13T12:02:01.000Z");
+    await fixture.service(owner, "US");
+    expect(fixture.enumerations()).toBe(1);
   });
 
   test("a stale mark causes a full re-observe", async () => {
@@ -232,7 +255,7 @@ describe("balance observations", () => {
     expect(fixture.enumerations()).toBe(1);
   });
 
-  test("partial registry coverage behaves as hot and re-reads only registry", async () => {
+  test("partial registry coverage behaves as hot without extending its lease", async () => {
     const fixture = setup({});
     await fixture.store.putObservation({
       ...observation(),
@@ -241,6 +264,7 @@ describe("balance observations", () => {
     await fixture.service(owner, "US");
     expect(fixture.reads()).toBe(1);
     expect(fixture.enumerations()).toBe(0);
+    expect((await fixture.store.get(8453, owner))?.observedAt).toBe(observedAt);
   });
 
   test("the 120 second backstop causes a full re-observe", async () => {

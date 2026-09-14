@@ -152,7 +152,7 @@ create table balance_snapshots (
   block_number    bigint not null,
   block_hash      text not null,
   block_timestamp bigint not null,    -- unix seconds from the pinned block
-  observed_at     timestamptz not null,     -- when the read pinned its block, not when the row was written
+  observed_at     timestamptz not null,     -- when the last full observation pinned its block
   stale_at     timestamptz,              -- one-shot: activity seen (webhook, funding receipt)
   hot_until    timestamptz,              -- post-action window: registry re-read on every request
   enumeration_cursor text,               -- next CDP page when a bounded scan is incomplete
@@ -167,7 +167,7 @@ Rules:
 - **Scope.** The row is keyed by address because that is what the chain and the webhook know; the verified session decides which address a request may read (unchanged verified-scope rule). Two providers on one address share one observation.
 - **Writers touch only their columns.** An observation write is a conditional upsert on `block_number` (a newer block never loses to an older one) that writes the observation columns only. Signal writers (`/confirm`, `/handle`, the webhook, a funding receipt) touch only `stale_at` or `hot_until`. A signal before the first observation intentionally no-ops: the first read is fresh by definition, and placeholder rows are forbidden.
 - **When a read re-observes.** Precedence is stale/expired/degraded → full; else hot → registry-only; else serve. `hot_until > now()` re-reads the registry only (the action changed a registry asset; catalog/wallet rows keep the last enumeration). `stale_at > observed_at`, degraded coverage, or `observed_at` older than the backstop causes a full re-observe (registry read + CDP enumeration). `hot_until` is set by `POST /api/actions/:id/confirm` and `/handle` to `now() + 60 s`; `stale_at` by the CDP `wallet.activity.multi` webhook (signature-verified; duplicates are harmless because it only sets `stale_at`; it writes no amounts) and by a funding order reaching `received`; the backstop is 120 s.
-- **Serving as observed.** `fetchedAt` on the wire is `observed_at`, never the response time. If a required re-observe fails, the row is served as it was, with `stale: true` on the snapshot (additive to v3) and its coverage unchanged; the presenter shows the observation age. Never fresh, never zero.
+- **Serving as observed.** `observed_at` is the last full observation's pin time; registry-only refreshes update registry rows and coverage without moving it. `fetchedAt` on the wire is `observed_at`, never the response time. If a required re-observe fails, the row is served as it was, with `stale: true` on the snapshot (additive to v3) and its coverage unchanged; the presenter shows the observation age. Never fresh, never zero.
 - **Stale maxima.** Send and Save take their maxima from the snapshot even when stale; the flow shows the observation age beside the max; the server's pinned read at `prepare` remains the authority (§Boundary).
 - **Prices never per owner.** Prices and FX stay in the global short-TTL caches and are applied at read time; there is no version column and no conditional-request scheme (the route is `no-store`; if one is wanted later, the ETag is `hash(block_hash, price asOf set, region)`).
 - **Dropping the row never affects correctness**; it costs one re-observe and any open hot window.
