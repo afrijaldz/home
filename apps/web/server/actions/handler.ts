@@ -15,7 +15,7 @@ import { finalizeTradeCalls, type PendingTradeConfirmation } from "./kinds/trade
 import { createSmartAccountSignatureVerifier } from "./kinds/trade/signer";
 import type { SmartAccountSignatureVerifier } from "@/shared/trading/server-types";
 import { emitServerEvent } from "@/server/observability/log";
-import { fireAndForgetBalanceSignal } from "@/server/balances/signal";
+import { awaitBalanceSignal } from "@/server/balances/signal";
 import {
   createActionHandleResolver,
   type ActionHandleResolver,
@@ -154,10 +154,10 @@ export function createConfirmActionHandler(dependencies: {
     const row = await store.confirm(owner, id, calls);
     if (!row || !row.pending?.calls?.length) return fail("ACTION_NOT_FOUND", "The action is unavailable or already confirmed.", 404);
     const signalTime = dependencies.now?.() ?? new Date();
-    fireAndForgetBalanceSignal(() => dependencies.markHot?.(
+    await awaitBalanceSignal(() => dependencies.markHot?.(
       owner.address,
       new Date(signalTime.getTime() + BALANCES_HOT_WINDOW_MS),
-    ));
+    ), { timeoutMs: 2_000 });
     return privateJson({ id: row.id, calls: row.pending.calls, summary: row.summary, expiresAt: row.summary.expiresAt } satisfies ConfirmActionResponse, 200);
   };
 }
@@ -196,10 +196,10 @@ export function createHandleActionHandler(dependencies: {
     const row = await (dependencies.store ?? getActionsStore()).recordHandle(owner, id, { providerHandle, transactionHash });
     if (!row) return fail("ACTION_NOT_FOUND", "The action is unavailable or the handle conflicts.", 404);
     const signalTime = dependencies.now?.() ?? new Date();
-    fireAndForgetBalanceSignal(() => dependencies.markHot?.(
+    await awaitBalanceSignal(() => dependencies.markHot?.(
       owner.address,
       new Date(signalTime.getTime() + BALANCES_HOT_WINDOW_MS),
-    ));
+    ), { timeoutMs: 2_000 });
     return privateJson({ action: await presentAction(row, owner) } satisfies HandleActionResponse, 200);
   };
 }

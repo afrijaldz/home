@@ -85,7 +85,6 @@ describe("FundingCore", () => {
     const received = await fixture.core.getOrder(session, created.id);
     expect(received.state).toBe("received");
     expect(received.instructions).toBeNull();
-    await Promise.resolve();
     expect(fixture.staleSignals()).toEqual([{
       address: session.smartAccount!.address,
       at: "2026-09-12T00:00:10.000Z",

@@ -2,14 +2,24 @@ import "server-only";
 
 import { emitServerEvent } from "@/server/observability/log";
 
-export function fireAndForgetBalanceSignal(
+export async function awaitBalanceSignal(
   run: () => Promise<void> | undefined,
-): void {
+  options: { timeoutMs: number },
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const pending = run();
-    if (pending) void pending.catch(() => observeFailure());
+    if (!pending) return;
+    await Promise.race([
+      pending,
+      new Promise<void>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Balance signal timed out.")), options.timeoutMs);
+      }),
+    ]);
   } catch {
     observeFailure();
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

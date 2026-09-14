@@ -8,7 +8,7 @@ import { decimalToAtomic } from "@/shared/formatting/atomic";
 import { createProviderContext } from "./provider-context";
 import { authenticateFundingQuote, isFundingQuoteExpired, signFundingQuote } from "./quote-token";
 import type { FundingOrder, FundingOrderOwner, FundingOrderStore } from "./store";
-import { fireAndForgetBalanceSignal } from "@/server/balances/signal";
+import { awaitBalanceSignal } from "@/server/balances/signal";
 
 export type ReceiptMatch = { transactionHash: `0x${string}`; logIndex: number } | null;
 
@@ -222,10 +222,10 @@ export class FundingCore {
         });
         if (received) {
           updated = received;
-          fireAndForgetBalanceSignal(() => this.deps.markStale?.(
+          await awaitBalanceSignal(() => this.deps.markStale?.(
             received.destination,
             receivedAt,
-          ));
+          ), { timeoutMs: 2_000 });
         }
       }
     }
