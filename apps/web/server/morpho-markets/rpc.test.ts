@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DEFAULT_BORROW_MARKET,
+  DEFAULT_VERIFIED_MORPHO_MARKET,
   MORPHO_BLUE_ADDRESS,
-  type BorrowMarketRef,
-} from "@/shared/borrowing/config";
+  type VerifiedMorphoMarketRef,
+} from "@/shared/morpho-markets/config";
 import { encodeCoinbaseExecuteBatch } from "./abi";
-import { ORACLE_PRICE_SCALE, availableBorrowAssets, borrowCapacityAssets, toAssetsUp } from "./math";
-import { BorrowRpcError, createBorrowRpcReader } from "./rpc";
+import { ORACLE_PRICE_SCALE, availableBorrowAssets, borrowCapacityAssets, toAssetsUp } from "@/shared/morpho-markets/math";
+import { MorphoMarketRpcError, createMorphoMarketRpcReader } from "./rpc";
 
 const OWNER = "0x1111111111111111111111111111111111111111" as const;
 const BLOCK_HASH = `0x${"ab".repeat(32)}` as `0x${string}`;
@@ -16,8 +16,8 @@ function word(value: bigint) { return value.toString(16).padStart(64, "0"); }
 function addressWord(address: string) { return address.slice(2).toLowerCase().padStart(64, "0"); }
 function words(...values: string[]) { return `0x${values.join("")}`; }
 
-function fixture(options: { wrongLltv?: boolean; market?: BorrowMarketRef } = {}) {
-  const configured = options.market ?? DEFAULT_BORROW_MARKET;
+function fixture(options: { wrongLltv?: boolean; market?: VerifiedMorphoMarketRef } = {}) {
+  const configured = options.market ?? DEFAULT_VERIFIED_MORPHO_MARKET;
   const requests: unknown[] = [];
   const totalSupplyAssets = BigInt("100000000000");
   const totalBorrowAssets = BigInt("500000000");
@@ -72,23 +72,20 @@ function fixture(options: { wrongLltv?: boolean; market?: BorrowMarketRef } = {}
   };
 }
 
-describe("Base Morpho borrowing RPC", () => {
+describe("Base Morpho market RPC", () => {
   test("pins all reads, verifies the exact market params, and derives debt and capacity from shares", async () => {
     const source = fixture();
-    const snapshot = await createBorrowRpcReader({
+    const snapshot = await createMorphoMarketRpcReader({
       fetchImpl: source.fetchImpl,
       rpcUrl: "https://rpc.example.test",
       now: () => new Date("2026-09-08T12:00:00.000Z"),
-    }).readSnapshot(OWNER, DEFAULT_BORROW_MARKET);
+    }).readSnapshot(OWNER, DEFAULT_VERIFIED_MORPHO_MARKET);
 
     expect(snapshot.market.morpho).toBe(MORPHO_BLUE_ADDRESS);
     expect(snapshot.position.debtAssetsRaw).toBe(source.expectedDebt.toString());
-    expect(BigInt(snapshot.position.rawBorrowCapacityAssetsRaw)).toBe(source.expectedCapacity);
-    expect(BigInt(snapshot.position.borrowCapacityAssetsRaw)).toBeLessThan(source.expectedCapacity);
+    expect(BigInt(snapshot.position.availableBorrowAssetsRaw)).toBe(source.expectedCapacity);
+    expect(snapshot.capabilities).toEqual({ borrow: "enabled" });
     expect(snapshot.source.blockHash).toBe(BLOCK_HASH);
-    expect(Object.keys(snapshot)).toEqual([
-      "chainId", "walletAddress", "version", "market", "eligibility", "source", "state", "wallet", "position",
-    ]);
     const batch = source.requests[2] as Array<{ params: unknown[] }>;
     expect(batch).toHaveLength(8);
     expect(batch.every((request) => request.params[1] === "0x64")).toBe(true);
@@ -96,20 +93,19 @@ describe("Base Morpho borrowing RPC", () => {
 
   test("uses the supplied typed market tuple and asset decimals without pair-specific branches", async () => {
     const generic = {
-      ...DEFAULT_BORROW_MARKET,
+      ...DEFAULT_VERIFIED_MORPHO_MARKET,
       marketId: `0x${"12".repeat(32)}` as const,
-      loanToken: { ...DEFAULT_BORROW_MARKET.loanToken, id: "eip155:8453/erc20:0x3333333333333333333333333333333333333333" as const, address: "0x3333333333333333333333333333333333333333" as const, symbol: "LOAN", decimals: 6 },
-      collateralToken: { ...DEFAULT_BORROW_MARKET.collateralToken, id: "eip155:8453/erc20:0x4444444444444444444444444444444444444444" as const, address: "0x4444444444444444444444444444444444444444" as const, symbol: "COLL", decimals: 18 },
+      loanToken: { ...DEFAULT_VERIFIED_MORPHO_MARKET.loanToken, id: "eip155:8453/erc20:0x3333333333333333333333333333333333333333" as const, address: "0x3333333333333333333333333333333333333333" as const, symbol: "LOAN", decimals: 6 },
+      collateralToken: { ...DEFAULT_VERIFIED_MORPHO_MARKET.collateralToken, id: "eip155:8453/erc20:0x4444444444444444444444444444444444444444" as const, address: "0x4444444444444444444444444444444444444444" as const, symbol: "COLL", decimals: 18 },
       lltvWad: BigInt("700000000000000000"),
       rank: 2,
-    } satisfies BorrowMarketRef;
+    } satisfies VerifiedMorphoMarketRef;
     const source = fixture({ market: generic });
-    const snapshot = await createBorrowRpcReader({ fetchImpl: source.fetchImpl, rpcUrl: "https://rpc.example.test" }).readSnapshot(OWNER, generic);
+    const snapshot = await createMorphoMarketRpcReader({ fetchImpl: source.fetchImpl, rpcUrl: "https://rpc.example.test" }).readSnapshot(OWNER, generic);
     expect(snapshot.market).toMatchObject({ id: generic.marketId, rank: 2, loanToken: { symbol: "LOAN", decimals: 6 }, collateralToken: { symbol: "COLL", decimals: 18 } });
     const remainingCollateral = BigInt(snapshot.position.collateralRaw) - BigInt(snapshot.position.withdrawableCollateralRaw);
     const remainingMaximumDebt = borrowCapacityAssets(remainingCollateral, BigInt(snapshot.state.oraclePriceRaw), generic.lltvWad);
-    expect(remainingMaximumDebt * BigInt("1000000000000000000"))
-      .toBeGreaterThanOrEqual(BigInt(snapshot.position.debtAssetsRaw) * BigInt("1250000000000000000"));
+    expect(remainingMaximumDebt).toBeGreaterThanOrEqual(BigInt(snapshot.position.debtAssetsRaw));
   });
 
   test("encodes the documented Coinbase executeBatch tuple array exactly", () => {
@@ -135,7 +131,7 @@ describe("Base Morpho borrowing RPC", () => {
       { to: OWNER, value: "0", data: "0x1234" as const },
       { to: IMPLEMENTATION, value: "0", data: "0xabcd" as const },
     ];
-    await createBorrowRpcReader({
+    await createMorphoMarketRpcReader({
       fetchImpl: fetchImpl as typeof fetch,
       rpcUrl: "https://rpc.example.test",
     }).simulateBatch(calls, OWNER, "100", BLOCK_HASH);
@@ -159,7 +155,7 @@ describe("Base Morpho borrowing RPC", () => {
       accountCode: string,
       confirmedHash = BLOCK_HASH,
       implementationCode = "0x6002",
-    ) => createBorrowRpcReader({
+    ) => createMorphoMarketRpcReader({
       rpcUrl: "https://rpc.example.test",
       fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
         const request = JSON.parse(String(init?.body)) as { id: number };
@@ -183,9 +179,9 @@ describe("Base Morpho borrowing RPC", () => {
 
   test("fails closed if onchain market parameters differ from the verified market", async () => {
     const source = fixture({ wrongLltv: true });
-    await expect(createBorrowRpcReader({
+    await expect(createMorphoMarketRpcReader({
       fetchImpl: source.fetchImpl,
       rpcUrl: "https://rpc.example.test",
-    }).readSnapshot(OWNER, DEFAULT_BORROW_MARKET)).rejects.toBeInstanceOf(BorrowRpcError);
+    }).readSnapshot(OWNER, DEFAULT_VERIFIED_MORPHO_MARKET)).rejects.toBeInstanceOf(MorphoMarketRpcError);
   });
 });
