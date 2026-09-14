@@ -18,6 +18,7 @@ export function createCdpWebhookHandler(dependencies: {
 }) {
   const now = dependencies.now ?? (() => new Date());
   let cached: { at: number; records: WebhookSubscriptionRecord[] } | null = null;
+  let lastForcedListAt = Number.NEGATIVE_INFINITY;
 
   async function subscriptions(force = false): Promise<WebhookSubscriptionRecord[]> {
     const current = now().getTime();
@@ -30,28 +31,35 @@ export function createCdpWebhookHandler(dependencies: {
   return async function handleCdpWebhook(raw: Uint8Array, signatureHeader: string | null, headers: Headers = new Headers()): Promise<Response> {
     const startedAt = Date.now();
     const current = now();
-    let payload: unknown;
+    let payload: unknown = null;
     try {
       payload = JSON.parse(new TextDecoder().decode(raw)) as unknown;
     } catch {
-      observe("rejected", "WEBHOOK_BODY_REJECTED", startedAt);
-      return Response.json({ accepted: false }, { status: 400 });
+      // Authenticate against every stored secret before reporting a body error.
+    }
+
+    let records = await subscriptions();
+    const identified = isRecord(payload) ? readSubscriptionId(payload) : null;
+    let matches = identified
+      ? records.filter((record) => record.subscriptionId === identified)
+      : records;
+    if (
+      identified &&
+      matches.length === 0 &&
+      current.getTime() - lastForcedListAt >= SUBSCRIPTION_CACHE_MS
+    ) {
+      lastForcedListAt = current.getTime();
+      records = await subscriptions(true);
+      matches = records.filter((record) => record.subscriptionId === identified);
+    }
+    const candidates = matches.length > 0 ? matches : records;
+    if (candidates.length === 0 || !candidates.some((record) => verifyCdpWebhookSignature(raw, signatureHeader, record.secret, current, headers))) {
+      observe("rejected", "WEBHOOK_SIGNATURE_REJECTED", startedAt);
+      return Response.json({ accepted: false }, { status: 401 });
     }
     if (!isRecord(payload)) {
       observe("rejected", "WEBHOOK_BODY_REJECTED", startedAt);
       return Response.json({ accepted: false }, { status: 400 });
-    }
-
-    let records = await subscriptions();
-    const identified = readSubscriptionId(payload);
-    let candidates = identified ? records.filter((record) => record.subscriptionId === identified) : records;
-    if (identified && candidates.length === 0) {
-      records = await subscriptions(true);
-      candidates = records.filter((record) => record.subscriptionId === identified);
-    }
-    if (candidates.length === 0 || !candidates.some((record) => verifyCdpWebhookSignature(raw, signatureHeader, record.secret, current, headers))) {
-      observe("rejected", "WEBHOOK_SIGNATURE_REJECTED", startedAt);
-      return Response.json({ accepted: false }, { status: 401 });
     }
 
     const eventType = readEventType(payload);

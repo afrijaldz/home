@@ -1,3 +1,4 @@
+// Migration numbers are one global sequence across server/db/migrations and server/funding/migrations; use the next free number.
 import "server-only";
 
 import { readdir, readFile } from "node:fs/promises";

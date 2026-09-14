@@ -187,9 +187,11 @@ export function createBalancesService(dependencies: Dependencies = {}) {
       : resolved;
     return {
       ...resumed,
-      enumerationCursor: enumeration.status === "complete"
-        ? null
-        : enumeration.nextCursor,
+      enumerationCursor: enumeration.status === "unavailable"
+        ? row?.enumerationCursor ?? null
+        : enumeration.status === "complete"
+          ? null
+          : enumeration.nextCursor,
     };
   }
 

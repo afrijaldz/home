@@ -28,6 +28,7 @@ type Subscription = {
   labels: Record<string, string>;
   isEnabled: boolean;
   addresses: `0x${string}`[];
+  addressesParsed: boolean;
 };
 
 export function createCdpWebhookSubscriptions(options: {
@@ -47,7 +48,11 @@ export function createCdpWebhookSubscriptions(options: {
   const origin = deploymentWebhookOrigin(env);
   let cached: { at: number; subscriptions: Subscription[] } | null = null;
   let listing: Promise<Subscription[]> | null = null;
+  let creating: { address: `0x${string}`; promise: Promise<void> } | null = null;
+  let createDisabled = false;
+  let listMismatch = false;
   let memoryDisabledLogged = false;
+  let unverifiableLogged = false;
 
   async function list(force = false): Promise<Subscription[]> {
     const current = now();
@@ -72,23 +77,41 @@ export function createCdpWebhookSubscriptions(options: {
     return pending;
   }
 
-  function candidates(subscriptions: Subscription[]): Subscription[] {
+  function candidates(
+    subscriptions: Subscription[],
+    known: ReadonlySet<string>,
+  ): Subscription[] {
     return subscriptions.filter((subscription) =>
+      known.has(subscription.id) &&
+      subscription.addressesParsed &&
       isBaseActivitySubscription(subscription) &&
       targetOrigin(subscription.targetUrl) === origin &&
       subscription.addresses.length < CDP_SUBSCRIPTION_ADDRESS_LIMIT
     );
   }
 
-  async function updateCandidate(address: `0x${string}`): Promise<boolean> {
+  function observeUnverifiable(subscriptions: Subscription[], known: ReadonlySet<string>): void {
+    if (unverifiableLogged || !subscriptions.some((subscription) =>
+      !known.has(subscription.id) && targetOrigin(subscription.targetUrl) === origin
+    )) return;
+    unverifiableLogged = true;
+    logFailure("subscription-unverifiable");
+  }
+
+  async function updateCandidate(
+    address: `0x${string}`,
+    known: ReadonlySet<string>,
+  ): Promise<boolean> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const subscriptions = await list(true);
+      observeUnverifiable(subscriptions, known);
       if (subscriptions.some((subscription) =>
+        known.has(subscription.id) &&
         isBaseActivitySubscription(subscription) &&
         targetOrigin(subscription.targetUrl) === origin &&
         subscription.addresses.includes(address)
       )) return true;
-      const target = candidates(subscriptions)[0];
+      const target = candidates(subscriptions, known)[0];
       if (!target) return false;
       const addresses = [...target.addresses, address];
       await requestJson({
@@ -100,11 +123,78 @@ export function createCdpWebhookSubscriptions(options: {
         body: subscriptionRequest(target, addresses),
       });
       const confirmed = await list(true);
+      observeUnverifiable(confirmed, known);
       if (confirmed.some((subscription) =>
-        subscription.id === target.id && subscription.addresses.includes(address)
+        known.has(subscription.id) &&
+        subscription.id === target.id &&
+        subscription.addresses.includes(address)
       )) return true;
     }
     throw new Error("subscription-update-not-confirmed");
+  }
+
+  async function createSubscription(address: `0x${string}`): Promise<void> {
+    if (creating) {
+      const active = creating;
+      await active.promise;
+      if (active.address === address || createDisabled) return;
+      cached = null;
+      return ensure(address);
+    }
+    const promise = (async () => {
+      const target = new URL("/api/webhooks/cdp", origin!).toString();
+      const payload = await requestJson({
+        env,
+        fetchImpl,
+        generateJwtImpl,
+        method: "POST",
+        path: CDP_WEBHOOK_SUBSCRIPTIONS_PATH,
+        body: createSubscriptionRequest(target, [address]),
+      });
+      const created = parseCreatedSubscription(payload);
+      if (!created) {
+        createDisabled = true;
+        throw new Error("cdp-create-response-missing-secret");
+      }
+      await store.insert({
+        subscriptionId: created.id,
+        secret: created.secret,
+        target,
+        eventType: CDP_ACTIVITY_EVENT_TYPE,
+      });
+      cached = null;
+    })();
+    creating = { address, promise };
+    try {
+      await promise;
+    } finally {
+      if (creating?.promise === promise) creating = null;
+    }
+  }
+
+  async function ensure(address: `0x${string}`): Promise<void> {
+    const records = await store.list();
+    const known = new Set(records.map((record) => record.subscriptionId));
+    const subscriptions = await list();
+    observeUnverifiable(subscriptions, known);
+    const matching = subscriptions.filter((subscription) =>
+      known.has(subscription.id) &&
+      isBaseActivitySubscription(subscription) &&
+      targetOrigin(subscription.targetUrl) === origin
+    );
+    if (matching.some((subscription) => subscription.addresses.includes(address))) return;
+    if (candidates(subscriptions, known).length > 0 && await updateCandidate(address, known)) return;
+
+    const originRecords = records.filter((record) => targetOrigin(record.target) === origin);
+    if (originRecords.length > 0 && !subscriptions.some((subscription) =>
+      originRecords.some((record) => record.subscriptionId === subscription.id)
+    )) {
+      if (!listMismatch) logFailure("subscription-list-mismatch");
+      listMismatch = true;
+      return;
+    }
+    if (listMismatch || createDisabled) return;
+    await createSubscription(address);
   }
 
   return {
@@ -118,32 +208,7 @@ export function createCdpWebhookSubscriptions(options: {
         return;
       }
       try {
-        const normalized = normalizeAddress(address);
-        const subscriptions = await list();
-        const matching = subscriptions.filter((subscription) =>
-          isBaseActivitySubscription(subscription) &&
-          targetOrigin(subscription.targetUrl) === origin
-        );
-        if (matching.some((subscription) => subscription.addresses.includes(normalized))) return;
-        if (candidates(subscriptions).length > 0 && await updateCandidate(normalized)) return;
-
-        const target = new URL("/api/webhooks/cdp", origin).toString();
-        const payload = await requestJson({
-          env,
-          fetchImpl,
-          generateJwtImpl,
-          method: "POST",
-          path: CDP_WEBHOOK_SUBSCRIPTIONS_PATH,
-          body: createSubscriptionRequest(target, [normalized]),
-        });
-        const created = parseCreatedSubscription(payload);
-        if (!created) throw new Error("cdp-create-response-missing-secret");
-        await store.insert({
-          subscriptionId: created.id,
-          secret: created.secret,
-          target,
-          eventType: CDP_ACTIVITY_EVENT_TYPE,
-        });
+        await ensure(normalizeAddress(address));
       } catch (error) {
         logFailure(error instanceof Error ? error.message : "subscription-failed");
       }
@@ -216,13 +281,15 @@ function parseSubscription(value: unknown): Subscription[] {
     ? Object.fromEntries(Object.entries(value.labels).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
     : legacyLabels(value.event_filters);
   if (!id || eventTypes.length === 0 || !targetUrl) return [];
+  const addressLabel = parseAddressLabel(labels.wallet_addresses);
   return [{
     id,
     eventTypes,
     targetUrl,
     labels,
     isEnabled: value.isEnabled !== false,
-    addresses: parseAddressLabel(labels.wallet_addresses),
+    addresses: addressLabel.addresses,
+    addressesParsed: addressLabel.parsed,
   }];
 }
 
@@ -236,14 +303,20 @@ function legacyLabels(value: unknown): Record<string, string> {
   return { network: CDP_ACTIVITY_NETWORK, wallet_addresses: addresses.join(",") };
 }
 
-function parseAddressLabel(value: string | undefined): `0x${string}`[] {
-  if (!value) return [];
-  return [...new Set(value.split(",").flatMap((address) => {
-    const trimmed = address.trim();
-    return /^0x[0-9a-fA-F]{40}$/.test(trimmed)
-      ? [trimmed.toLowerCase() as `0x${string}`]
-      : [];
-  }))];
+function parseAddressLabel(value: string | undefined): {
+  addresses: `0x${string}`[];
+  parsed: boolean;
+} {
+  if (!value) return { addresses: [], parsed: false };
+  const entries = value.split(",").map((address) => address.trim());
+  if (entries.some((address) => !/^0x[0-9a-fA-F]{40}$/.test(address))) {
+    return { addresses: [], parsed: false };
+  }
+  return {
+    addresses: [...new Set(entries.map((address) =>
+      address.toLowerCase() as `0x${string}`))],
+    parsed: true,
+  };
 }
 
 function parseCreatedSubscription(value: unknown): { id: string; secret: string } | null {
@@ -314,7 +387,11 @@ function observeSubscriptionFailure(reason: string): void {
     route: "/api/balances",
     code: reason === "subscription-persistence-unavailable"
       ? "SUBSCRIPTION_DISABLED"
-      : "SUBSCRIPTION_FAILED",
+      : reason === "subscription-unverifiable"
+        ? "SUBSCRIPTION_UNVERIFIABLE"
+        : reason === "subscription-list-mismatch"
+          ? "SUBSCRIPTION_LIST_MISMATCH"
+          : "SUBSCRIPTION_FAILED",
     outcome: "unavailable",
     provider: reason,
     durationMs: 0,

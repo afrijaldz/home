@@ -126,6 +126,43 @@ describe("CDP balance activity webhook", () => {
     expect(reads).toBe(2);
   });
 
+  test("accepts an identified unknown id when another stored secret verifies", async () => {
+    const store = await seededStore();
+    const raw = body({
+      subscriptionId: "unknown-subscription",
+      eventType: "wallet.activity.multi",
+      data: { address: ADDRESS },
+    });
+    const handler = createCdpWebhookHandler({
+      store,
+      subscriptions: subscriptionStore(),
+      now: () => NOW,
+    });
+
+    expect((await handler(raw, signed(raw))).status).toBe(200);
+  });
+
+  test("throttles forced subscription re-lists to once per minute", async () => {
+    const store = await seededStore();
+    let reads = 0;
+    const handler = createCdpWebhookHandler({
+      store,
+      subscriptions: {
+        list: async () => {
+          reads += 1;
+          return subscriptionStore().list();
+        },
+      },
+      now: () => NOW,
+    });
+    const first = body({ subscriptionId: "unknown-1", eventType: "wallet.activity.multi" });
+    const second = body({ subscriptionId: "unknown-2", eventType: "wallet.activity.multi" });
+
+    expect((await handler(first, "invalid")).status).toBe(401);
+    expect((await handler(second, "invalid")).status).toBe(401);
+    expect(reads).toBe(2);
+  });
+
   test("rejects invalid signatures and timestamps outside the replay window", async () => {
     const store = await seededStore();
     const raw = body({ eventType: "wallet.activity.detected", data: { address: ADDRESS } });
@@ -154,11 +191,22 @@ describe("CDP balance activity webhook", () => {
     expect((await store.get(8453, ADDRESS))?.staleAt).toBeNull();
   });
 
-  test("a signed malformed body is rejected without throwing", async () => {
+  test("a signed malformed body is rejected after signature verification", async () => {
     const store = await seededStore();
+    let reads = 0;
     const raw = new TextEncoder().encode("{not-json");
-    const response = await createCdpWebhookHandler({ store, subscriptions: subscriptionStore(), now: () => NOW })(raw, signed(raw));
+    const response = await createCdpWebhookHandler({
+      store,
+      subscriptions: {
+        list: async () => {
+          reads += 1;
+          return subscriptionStore().list();
+        },
+      },
+      now: () => NOW,
+    })(raw, signed(raw));
     expect(response.status).toBe(400);
+    expect(reads).toBe(1);
   });
 
   test("extracts only documented address fields and lowercases/dedupes them", () => {
