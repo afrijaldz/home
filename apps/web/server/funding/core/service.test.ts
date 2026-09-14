@@ -19,6 +19,7 @@ function setup(
   let dispatches = 0;
   let blockReads = 0;
   let receiptVerifications = 0;
+  const getOrderSandboxes: boolean[] = [];
   let observation: "awaiting-payment" | "sent" = "awaiting-payment";
   let date = new Date("2026-09-12T00:00:00.000Z");
   const provider: FundingProvider = {
@@ -29,10 +30,13 @@ function setup(
       if (outcome === "ambiguous") return { outcome: "ambiguous" };
       return { outcome: "created", order: { providerOrderId: "fixture-order", tokenAddress: ctx.binding.asset.address, expectedTokenAmountAtomic: input.quote!.tokenAmountAtomic, fees: [], expiresAt: null, instructions: { kind: "bank-transfer", rail: "VA", accountNumber: "12345678", amount: input.fiatAmount, currency: "IDR" } } };
     },
-    async getOrder() { return { state: observation, providerStatus: observation, transactionHash: observation === "sent" ? `0x${"2".repeat(64)}` : null }; },
+    async getOrder(_input, ctx) {
+      getOrderSandboxes.push(ctx.sandbox);
+      return { state: observation, providerStatus: observation, transactionHash: observation === "sent" ? `0x${"2".repeat(64)}` : null };
+    },
   };
   const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32), ...(options.sandbox ? { FUNDING_SANDBOX: "1" } : {}) }, currentBaseBlock: async () => { blockReads += 1; return "500"; }, verifyReceipt: async (_order, hash) => { receiptVerifications += 1; return { transactionHash: hash, logIndex: 4 }; }, now: () => date });
-  return { core, dispatches: () => dispatches, blockReads: () => blockReads, receiptVerifications: () => receiptVerifications, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
+  return { core, dispatches: () => dispatches, blockReads: () => blockReads, receiptVerifications: () => receiptVerifications, getOrderSandboxes: () => getOrderSandboxes, advance(minutes: number) { date = new Date(date.getTime() + minutes * 60_000); }, sent() { observation = "sent"; date = new Date("2026-09-12T00:00:10.000Z"); } };
 }
 
 describe("FundingCore", () => {
@@ -68,13 +72,49 @@ describe("FundingCore", () => {
 
   test("rejects quote tokens when the core sandbox mode changes", async () => {
     const sandbox = setup("created", { sandbox: true, providerSandbox: true });
-    const quote = await sandbox.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
-    expect(quote.sandbox).toBe(true);
+    const sandboxQuote = await sandbox.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
+    expect(sandboxQuote.sandbox).toBe(true);
 
     const live = setup("created", { providerSandbox: true });
-    await expect(live.core.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example")).rejects.toMatchObject({ code: "INVALID_QUOTE_TOKEN" });
+    await expect(live.core.createOrder(session, { quoteToken: sandboxQuote.quoteToken }, "https://home.example")).rejects.toMatchObject({ code: "INVALID_QUOTE_TOKEN" });
     expect(live.blockReads()).toBe(0);
     expect(live.dispatches()).toBe(0);
+
+    const liveQuote = await live.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "21000" }, "https://home.example");
+    await expect(sandbox.core.createOrder(session, { quoteToken: liveQuote.quoteToken }, "https://home.example")).rejects.toMatchObject({ code: "INVALID_QUOTE_TOKEN" });
+    expect(sandbox.blockReads()).toBe(0);
+    expect(sandbox.dispatches()).toBe(0);
+  });
+
+  test("rejects sandbox quotes for providers that do not declare sandbox support", async () => {
+    let providerCalls = 0;
+    const provider: FundingProvider = {
+      manifest: { ...manifest, quotes: true },
+      async createQuote() { providerCalls += 1; throw new Error("unexpected provider call"); },
+      async createOrder() { providerCalls += 1; return { outcome: "ambiguous" }; },
+      async getOrder() { providerCalls += 1; return { state: "unknown", providerStatus: "unknown" }; },
+    };
+    const core = new FundingCore({
+      providers: [provider],
+      store: new MemoryFundingOrderStore(),
+      env: { FIXTURE_KEY: "set", FUNDING_SANDBOX: "1", ["FUNDING_" + "QUOTE_SECRET"]: "q".repeat(32) },
+      currentBaseBlock: async () => "1",
+      verifyReceipt: async () => null,
+    });
+
+    await expect(core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example")).rejects.toMatchObject({ code: "INVALID_QUOTE_REQUEST" });
+    expect(providerCalls).toBe(0);
+  });
+
+  test("refresh uses the persisted order sandbox mode in the provider context", async () => {
+    for (const sandbox of [false, true]) {
+      const fixture = setup("created", { sandbox, providerSandbox: sandbox });
+      const quote = await fixture.core.createQuote(session, { providerId: "fixture", region: "ID", paymentMethod: "bank", fiatAmount: "20000" }, "https://home.example");
+      const order = await fixture.core.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example");
+      fixture.advance(1);
+      await fixture.core.getOrder(session, order.id);
+      expect(fixture.getOrderSandboxes()).toEqual([sandbox]);
+    }
   });
 
   test("exposes sandbox orders and never verifies receipts for them", async () => {
@@ -364,6 +404,11 @@ describe("resolveClientIp", () => {
     expect(resolveClientIp(headers("127.0.0.1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, false)).toBe("127.0.0.1");
     expect(resolveClientIp(headers(), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, false)).toBeUndefined();
   });
+  test("rejects arbitrary forwarded header values", () => {
+    expect(resolveClientIp(new Headers({ "x-forwarded-for": "203.0.113.9 attacker" }), {}, false)).toBeUndefined();
+    expect(resolveClientIp(new Headers({ "x-real-ip": "not-an-ip" }), {}, false)).toBeUndefined();
+    expect(resolveClientIp(new Headers({ "x-forwarded-for": "a" }), {}, false)).toBeUndefined();
+  });
   test("substitutes the sandbox override only for a missing or private forwarded IP", () => {
     expect(resolveClientIp(headers("127.0.0.1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("198.51.100.7");
     expect(resolveClientIp(headers("::1"), { FUNDING_SANDBOX_CLIENT_IP: "198.51.100.7" }, true)).toBe("198.51.100.7");
@@ -372,7 +417,15 @@ describe("resolveClientIp", () => {
     expect(resolveClientIp(headers("127.0.0.1"), {}, true)).toBe("127.0.0.1");
   });
   test("classifies private ranges", () => {
-    for (const ip of ["127.0.0.1", "10.1.2.3", "192.168.0.5", "172.16.0.1", "172.31.255.1", "169.254.1.1", "::1", "::ffff:127.0.0.1", "fd12::1", "fe80::1"]) expect(isPrivateIp(ip), ip).toBe(true);
-    for (const ip of ["203.0.113.9", "172.32.0.1", "8.8.8.8", "2001:db8::1"]) expect(isPrivateIp(ip), ip).toBe(false);
+    for (const ip of [
+      "127.0.0.1", "10.1.2.3", "192.168.0.5", "172.16.0.1", "172.31.255.1", "169.254.1.1",
+      "100.64.0.1", "100.127.255.254", "::", "0:0:0:0:0:0:0:0", "0000:0000:0000:0000:0000:0000:0000:0000",
+      "::1", "::ffff:127.0.0.1", "::ffff:10.1.2.3", "::ffff:192.168.0.5", "::ffff:172.16.0.1", "::ffff:172.31.255.1",
+      "fd12::1", "fe80::1",
+    ]) expect(isPrivateIp(ip), ip).toBe(true);
+    for (const ip of [
+      "203.0.113.9", "172.32.0.1", "8.8.8.8", "100.63.255.255", "100.128.0.1", "::ffff:8.8.8.8", "2001:db8::1",
+      "localhost", "private.example", "fc.example", "fe80.example",
+    ]) expect(isPrivateIp(ip), ip).toBe(false);
   });
 });

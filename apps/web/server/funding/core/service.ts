@@ -298,8 +298,8 @@ function validKycFields(fields: Record<string, string>, definitions: ReadonlyArr
 }
 function clientIpFromHeaders(headers: Headers | undefined): string | undefined {
   const forwarded = headers?.get("x-forwarded-for")?.split(",")[0]?.trim();
-  if (forwarded) return forwarded;
-  return headers?.get("x-real-ip")?.trim() || undefined;
+  const candidate = forwarded || headers?.get("x-real-ip")?.trim();
+  return candidate && /^[0-9a-f.:]{2,45}$/i.test(candidate) ? candidate : undefined;
 }
 // Providers that need the end user's public IP reject loopback and private
 // ranges. A local sandbox run has only those, so sandbox mode alone may
@@ -311,6 +311,6 @@ export function resolveClientIp(headers: Headers | undefined, env: Environment, 
   if (override && (!observed || isPrivateIp(observed))) return override;
   return observed;
 }
-const PRIVATE_IP = /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|0\.0\.0\.0$|::1$|::ffff:127\.|fc|fd|fe80:)/i;
+const PRIVATE_IP = /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|0\.0\.0\.0$|::(?:1)?$|(?:0{1,4}:){7}0{1,4}$|::ffff:(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|0\.0\.0\.0$)|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i;
 export function isPrivateIp(value: string): boolean { return PRIVATE_IP.test(value.trim()); }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

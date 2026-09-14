@@ -20,4 +20,10 @@ describe("fundingRequestOrigin", () => {
     expect(fundingRequestOrigin(request("http://127.0.0.1:3000/x", { "x-forwarded-host": "evil.example/path?x", "x-forwarded-proto": "javascript" }))).toBe("http://127.0.0.1:3000");
     expect(fundingRequestOrigin(request("http://127.0.0.1:3000/x", { "x-forwarded-host": "a.example, b.example" }))).toBe("http://a.example");
   });
+
+  test("falls back when the forwarded host cannot form a usable origin", () => {
+    for (const host of ["localhost:99999", "-", ".."]) {
+      expect(fundingRequestOrigin(request("http://127.0.0.1:3000/x", { "x-forwarded-host": host })), host).toBe("http://127.0.0.1:3000");
+    }
+  });
 });

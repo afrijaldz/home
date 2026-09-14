@@ -42,6 +42,7 @@ export type FundingProviderManifest = {
   }>;
   apiOrigins: ReadonlyArray<string>;  // ctx.fetch refuses other hosts
   redirectOrigins?: ReadonlyArray<string>;
+  sandbox?: boolean;
   reference: "home" | "provider";     // who assigns the order reference (Ripio: home; IDRX: provider)
   quotes?: boolean;
   kyc?: {
@@ -63,6 +64,7 @@ export type FundingProvider = {
 export type ProviderContext = {
   binding: { region: CountryCode; asset: FundingAsset; paymentMethod: { id: string; label: string } };
   env: Readonly<Record<string, string>>;   // only the manifest's declared variables
+  sandbox: boolean;
   fetch: typeof fetch;                     // origin allowlist, redirect: "manual", timeout
 };
 
@@ -75,6 +77,7 @@ export type OrderIntent = {
   fiatAmount: string;
   quote?: Quote;                           // the core-verified quote, never a client-supplied ID
   customerRef?: string;
+  clientIp?: string;
   returnUrl: string;
 };
 
@@ -199,7 +202,11 @@ Cut after review to keep the first version small. Each is a follow-up if a real 
 - If a provider cannot lock a quote, the adapter requests the exact quoted token amount on create and reports the resulting fiat total on the instruction. Coinbase follows this rule by pinning USDC `purchaseAmount`; a changed USD total is reviewed in Home and authorized again in Apple Pay.
 - Coinbase's hosted redirect and `/platform/v2/onramp/sessions` path were removed. Migration `003_coinbase_hosted_retired.sql` terminalizes any remaining open `coinbase` / `hosted` rows so they no longer block or resume the US flow.
 - Live sandbox validation found that Coinbase requires `clientIp` on order creation even though its reference marks the field optional. The orders route passes the first `x-forwarded-for` hop (falling back to `x-real-ip`) through the core as an ephemeral `OrderIntent.clientIp`; it is never persisted, signed into quote claims, logged, or returned publicly.
-- Sandbox mode is core-owned and enabled only by `FUNDING_SANDBOX=1`: the core lists only providers declaring `manifest.sandbox: true`, passes `ctx.sandbox`, binds the mode into signed quote tokens and persisted orders, and exposes it to the client. Sandbox orders never run receipt verification; when a provider reports `sent`, their ceiling is the terminal `sent-unverified` state because no real funds move.
+- Sandbox mode is core-owned and enabled only by `FUNDING_SANDBOX=1`: the core lists only providers declaring `manifest.sandbox: true`, passes `ctx.sandbox`, binds the mode into signed quote tokens and persisted orders, and exposes it to the client. Sandbox orders never run receipt verification; when a provider reports `sent`, the client treats `sent-unverified` as complete and the row is excluded from open-order resume.
+
+The design originally cut sandbox from v1, then reversed that decision on September 13, 2026 because production embedded create returned `Email is required`. The core owns the mode shape: provider eligibility through `manifest.sandbox`, adapter context through `ProviderContext.sandbox`, quote-mode binding, persisted `FundingOrder.sandbox`, receipt-verification suppression, and client presentation.
+
+`fundingRequestOrigin` prefers the platform/proxy-owned `x-forwarded-host` and `x-forwarded-proto` over the server bind address, while client IP uses `x-forwarded-for` before `x-real-ip`. Home relies on the platform or proxy owning those headers; Vercel does. Do not expose a bare `next start` server directly to untrusted clients.
 
 ## Implementation notes and deviations (#301)
 

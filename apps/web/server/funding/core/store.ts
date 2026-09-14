@@ -124,7 +124,8 @@ export class MemoryFundingOrderStore implements FundingOrderStore {
   async getOpen(owner: FundingOrderOwner, region: string) {
     return cloneOrNull([...this.orders.values()].reverse().find((order) =>
       sameOwner(order.owner, owner) && order.region === region
-        && (!isTerminalFundingState(order.state) || order.state === "dispatch-ambiguous"),
+        && (!isTerminalFundingState(order.state) || order.state === "dispatch-ambiguous")
+        && !(order.sandbox && order.state === "sent-unverified"),
     ));
   }
 

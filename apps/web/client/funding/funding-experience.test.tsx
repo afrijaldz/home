@@ -110,6 +110,7 @@ describe("FundingExperience", () => {
     expect(page().queryByText("1234567890")).toBeNull();
     fireEvent.click(page().getByRole("button", { name: "View payment instructions" }));
     await page().findByText("Deposit pending");
+    expect(page().queryByText("Sandbox — not a real deposit")).toBeNull();
     expect(page().getByText("1234567890")).toBeTruthy();
     expect(requests.find((item) => item.path === "/api/funding/orders")?.body).toEqual({ quoteToken: "signed-token" });
   });

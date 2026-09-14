@@ -69,7 +69,12 @@ export function fundingRequestOrigin(request: Request): string {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  const host = forwardedHost && /^[a-z0-9.-]+(?::\d{1,5})?$/i.test(forwardedHost) ? forwardedHost : url.host;
+  const host = forwardedHost && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/i.test(forwardedHost) ? forwardedHost : url.host;
   const protocol = forwardedProto === "https" || forwardedProto === "http" ? `${forwardedProto}:` : url.protocol;
-  return `${protocol}//${host}`;
+  const candidate = `${protocol}//${host}`;
+  try {
+    return new URL(candidate).origin;
+  } catch {
+    return url.origin;
+  }
 }

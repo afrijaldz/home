@@ -30,6 +30,21 @@ describe("MemoryFundingOrderStore contract", () => {
     expect((await store.getOwned(base.id, owner))?.state).toBe("dispatch-ambiguous");
   });
 
+  test("does not resume completed sandbox runs but keeps live sent-unverified orders open", async () => {
+    const sandboxStore = new MemoryFundingOrderStore();
+    const sandbox = { ...base, sandbox: true };
+    await sandboxStore.reserve(sandbox);
+    const sandboxDispatched = await sandboxStore.completeDispatch(sandbox.id, { providerOrderId: "sandbox-provider", expectedTokenAmountAtomic: "2000000", fees: [], expiresAt: null, instructions: { kind: "redirect", url: "https://example.com" }, expectedVersion: 0, updatedAt: "2026-09-12T00:00:01.000Z" });
+    await sandboxStore.applyObservation(sandbox.id, { state: "sent-unverified", providerStatus: "complete", expectedVersion: sandboxDispatched.version, updatedAt: "2026-09-12T00:00:02.000Z" });
+    expect(await sandboxStore.getOpen(owner, "ID")).toBeNull();
+
+    const liveStore = new MemoryFundingOrderStore();
+    await liveStore.reserve(base);
+    const liveDispatched = await liveStore.completeDispatch(base.id, { providerOrderId: "live-provider", expectedTokenAmountAtomic: "2000000", fees: [], expiresAt: null, instructions: { kind: "redirect", url: "https://example.com" }, expectedVersion: 0, updatedAt: "2026-09-12T00:00:01.000Z" });
+    await liveStore.applyObservation(base.id, { state: "sent-unverified", providerStatus: "unverified", expectedVersion: liveDispatched.version, updatedAt: "2026-09-12T00:00:02.000Z" });
+    expect((await liveStore.getOpen(owner, "ID"))?.id).toBe(base.id);
+  });
+
   test("enforces unique provider IDs and unique receipt claims", async () => {
     const store = new MemoryFundingOrderStore();
     await store.reserve(base);

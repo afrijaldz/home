@@ -58,6 +58,20 @@ describePostgres("PostgresFundingOrderStore production contract", () => {
     expect((await store.getOwned(input.id, input.owner))?.sandbox).toBe(true);
   });
 
+  test("does not resume completed sandbox runs but keeps live sent-unverified orders open", async () => {
+    const sandbox = { ...reservation(), owner: { subject: "pg-sandbox", accountProvider: "base-account" as const }, sandbox: true };
+    await store.reserve(sandbox);
+    const sandboxDispatched = await store.completeDispatch(sandbox.id, { ...dispatch, providerOrderId: "sandbox-sent" });
+    await store.applyObservation(sandbox.id, { state: "sent-unverified", providerStatus: "complete", expectedVersion: sandboxDispatched.version, updatedAt: "2026-09-12T00:00:02.000Z" });
+    expect(await store.getOpen(sandbox.owner, "ID")).toBeNull();
+
+    const live = { ...reservation(), owner: { subject: "pg-live", accountProvider: "base-account" as const } };
+    await store.reserve(live);
+    const liveDispatched = await store.completeDispatch(live.id, { ...dispatch, providerOrderId: "live-sent" });
+    await store.applyObservation(live.id, { state: "sent-unverified", providerStatus: "unverified", expectedVersion: liveDispatched.version, updatedAt: "2026-09-12T00:00:02.000Z" });
+    expect((await store.getOpen(live.owner, "ID"))?.id).toBe(live.id);
+  });
+
   test("CAS rejects stale observations and terminal states cannot reopen", async () => {
     const input = reservation();
     await store.reserve(input);
