@@ -315,6 +315,42 @@ describe("balance observations", () => {
     expect(snapshot.block.number).toBe("12");
   });
 
+  test("an unavailable enumeration preserves prior non-registry holdings and the full-observation pin", async () => {
+    const freshRegistry = {
+      ...registry,
+      balance: { status: "ready" as const, baseUnits: "9" },
+    };
+    const fixture = setup({
+      now: "2026-09-13T12:02:01.000Z",
+      registryRead: async () => read(
+        "11",
+        "2026-09-13T12:02:01.000Z",
+        [freshRegistry],
+      ),
+      enumerate: async () => ({
+        status: "unavailable",
+        rows: [],
+        nextCursor: null,
+        pagesRead: 0,
+        durationMs: 1,
+      }),
+    });
+    await fixture.store.putObservation(observation());
+
+    const first = await fixture.service(owner, "US");
+    expect(first.holdings.map(({ id }) => id)).toEqual([registry.id, catalog.id]);
+    expect(first.holdings[0]?.balance).toEqual({ status: "ready", baseUnits: "9" });
+    expect(first.coverage).toEqual({ registry: "complete", catalog: "complete" });
+    expect(first.fetchedAt).toBe(observedAt);
+    expect(await fixture.store.get(8453, owner)).toMatchObject({
+      observedAt,
+      enumerationCursor: null,
+    });
+
+    await fixture.service(owner, "US");
+    expect(fixture.enumerations()).toBe(2);
+  });
+
   test("an unavailable enumeration resume preserves the stored cursor", async () => {
     const fixture = setup({
       enumerate: async () => ({

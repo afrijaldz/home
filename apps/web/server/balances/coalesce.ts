@@ -182,11 +182,14 @@ export function createBalancesService(dependencies: Dependencies = {}) {
     ]);
     const resolved = await timeStage(nowMs, durationMs, "resolve", () =>
       resolveBalances(registryRead, enumeration));
-    const resumed = row?.enumerationCursor
+    const resumed = row && (row.enumerationCursor || enumeration.status === "unavailable")
       ? mergeResumedHoldings(resolved, row, enumeration)
       : resolved;
     return {
       ...resumed,
+      observedAt: row && enumeration.status === "unavailable"
+        ? row.observedAt
+        : resumed.observedAt,
       enumerationCursor: enumeration.status === "unavailable"
         ? row?.enumerationCursor ?? null
         : enumeration.status === "complete"
