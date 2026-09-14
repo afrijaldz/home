@@ -10,7 +10,12 @@ import {
   ready,
   unavailableBalance,
 } from "./fixtures";
-import { presentBalanceRows, presentBalances, presentMoneyGroups } from "./present";
+import {
+  presentBalanceRows,
+  presentBalances,
+  presentMoneyGroups,
+  presentSavedSubtotal,
+} from "./present";
 
 describe("balance presentation", () => {
   test("keeps cash truth, hides noncash zero/unavailable and vault shares, and includes catalog rows", () => {
@@ -113,6 +118,30 @@ describe("balance presentation", () => {
     const usd = presentBalanceRows(snapshot).find((row) => row.name === "US dollar");
     expect(usd?.primary).toContain("$");
     expect(usd?.primary).not.toContain("€");
+  });
+
+  test("does not let priced zero vaults mask funded unpriced savings", () => {
+    const snapshot = buildBalancesSnapshotFixture({
+      registry: {
+        "morpho-gauntlet-usdc": {
+          balance: ready("312000000000000000000"),
+          underlyingBalance: ready("320000000"),
+          value: { status: "unpriced", reason: "price-unavailable" },
+        },
+      },
+    });
+
+    expect(presentSavedSubtotal(snapshot)).toBeNull();
+  });
+
+  test("omits all-zero savings from the hero breakdown", () => {
+    const presentation = presentBalances({
+      status: "ready",
+      snapshot: buildBalancesSnapshotFixture(),
+      error: null,
+    });
+
+    expect(presentation.breakdown.some((item) => item.id === "saved")).toBeFalse();
   });
 
   test("maps loading, partial and unavailable total states without sentinel rows", () => {

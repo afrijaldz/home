@@ -49,6 +49,17 @@ export type MoneyAssetOption = {
   mark?: AssetMarkPresentation;
 };
 
+export function matchesMoneyAssetOption(
+  option: MoneyAssetOption,
+  query: string,
+): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return `${option.description ?? ""} ${option.label}`
+    .toLocaleLowerCase()
+    .includes(normalized);
+}
+
 export function shouldAnimatePrimaryAmount(
   previousAmount: string,
   amount: string,
@@ -345,35 +356,51 @@ export function MoneyAssetPicker({
   onAssetChange?: (assetId: string) => void;
   locked?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   if (!assetLabel) return <span />;
   const markCurrency = assetCurrency ?? (assetId === "usdc" ? "USD" : null);
+  const options = assetOptions ?? [];
   const canPick = Boolean(!locked && assetId && assetOptions && onAssetChange);
 
   if (!canPick) {
     return (
       <div className="flex h-9 items-center gap-2 rounded-md border bg-background px-2 text-sm font-medium" aria-label={assetLabel}>
-        <CurrencyMark currency={markCurrency} symbol={assetLabel} />
+        <CurrencyMark currency={markCurrency} symbol={assetLabel} size="sm" />
         <span>{assetLabel}</span>
       </div>
     );
   }
 
-  const selected = assetOptions?.find((option) => option.id === assetId) ?? null;
+  const selected = options.find((option) => option.id === assetId) ?? null;
   return (
     <Combobox
-      items={assetOptions}
+      items={options}
       value={selected}
-      onValueChange={(option) => { if (option) onAssetChange?.(option.id); }}
-      itemToStringValue={(option) => option.label}
+      open={open}
+      autoHighlight
+      onOpenChange={setOpen}
+      onValueChange={(option) => {
+        if (!option) return;
+        onAssetChange?.(option.id);
+        setOpen(false);
+      }}
+      itemToStringLabel={(option) => option.description ?? option.label}
+      itemToStringValue={(option) => option.id}
+      filter={matchesMoneyAssetOption}
     >
-      <ComboboxInput aria-label="Asset" placeholder={assetLabel} className="h-11 w-auto min-w-28">
+      <ComboboxInput
+        aria-label="Asset"
+        placeholder={selected?.description ?? assetLabel}
+        className="h-11 w-auto min-w-28"
+      >
         {selected?.mark ? (
-          <InputGroupAddon align="inline-start" className="[&_[data-mark]]:size-6">
+          <InputGroupAddon align="inline-start">
             <CurrencyMark
               currency={selected.mark.currency}
               symbol={selected.mark.symbol}
               src={selected.mark.imageUrl}
               pending={selected.mark.pending}
+              size="sm"
             />
           </InputGroupAddon>
         ) : null}
@@ -384,17 +411,21 @@ export function MoneyAssetPicker({
           {(option) => (
             <ComboboxItem key={option.id} value={option}>
               {option.mark ? (
-                <span className="shrink-0 [&_[data-mark]]:size-6">
+                <span className="shrink-0">
                   <CurrencyMark
                     currency={option.mark.currency}
                     symbol={option.mark.symbol}
                     src={option.mark.imageUrl}
                     pending={option.mark.pending}
+                    size="sm"
                   />
                 </span>
               ) : null}
-              <span className="min-w-0 truncate">
-                {option.description ? `${option.label} — ${option.description}` : option.label}
+              <span className="flex min-w-0 items-baseline gap-2 truncate">
+                <span className="truncate">{option.description ?? option.label}</span>
+                {option.description ? (
+                  <span className="shrink-0 text-muted-foreground">{option.label}</span>
+                ) : null}
               </span>
             </ComboboxItem>
           )}

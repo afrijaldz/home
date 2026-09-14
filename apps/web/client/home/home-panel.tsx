@@ -15,6 +15,7 @@ import type { FetchActivity } from "@/client/activity";
 import type { AssetMarkResolution } from "@/client/asset-mark/presentation";
 import { FundingActions } from "@/client/funding/funding-actions";
 import { SavingsTeaser } from "@/client/savings/savings-teaser";
+import { PresentationRegionProvider } from "@/client/invest/presentation-quote";
 import { TransferActions } from "@/client/transfers";
 import type { MoneyGroupPresentation } from "@/shared/balances/present";
 import type { TransferAssetAvailability } from "@/shared/transfers/types";
@@ -144,12 +145,14 @@ export function HomePanel({
           returnedFromProvider={returnedFromProvider}
           regionId={regionId}
         />
-        <TransferActions
-          initialOpen={initialSendFlow}
-          initialActionId={initialSendActionId}
-          availableAssets={sendAvailability}
-          assetMarkResolution={assetMarkResolution}
-        />
+        <PresentationRegionProvider regionId={regionId}>
+          <TransferActions
+            initialOpen={initialSendFlow}
+            initialActionId={initialSendActionId}
+            availableAssets={sendAvailability}
+            assetMarkResolution={assetMarkResolution}
+          />
+        </PresentationRegionProvider>
       </div>
 
       <section aria-labelledby="your-money-heading">
@@ -179,7 +182,7 @@ export function HomePanel({
             <CardTitle id="save-heading" role="heading" aria-level={2}>Save</CardTitle>
           </CardHeader>
           <CardContent className="px-2">
-            <SavingsTeaser onOpen={onOpenSave} />
+            <SavingsTeaser onOpen={onOpenSave} regionId={regionId} />
           </CardContent>
         </Card>
       </section>

@@ -504,7 +504,11 @@ test("sends a held catalog cbBTC balance with one asset selector indicator", asy
   await expect(selector).toBeVisible();
   await expect(send.locator('[data-slot="input-group-button"]')).toHaveCount(1);
   await selector.click();
-  await page.getByRole("option", { name: /cbBTC/ }).click();
+  await selector.fill("cbBTC");
+  const cbBtcOption = page.getByRole("option", { name: "Bitcoin cbBTC" });
+  await expect(cbBtcOption).toBeVisible();
+  await selector.press("Enter");
+  await expect(selector).toHaveValue("Bitcoin");
   await expect(send.getByRole("img", { name: "0.001 cbBTC available" })).toBeVisible();
   await typeAmount(page, "0.001");
   await send.getByRole("button", { name: "Continue" }).click();

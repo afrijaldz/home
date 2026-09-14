@@ -1,13 +1,15 @@
 import "@/client/account/dom-test-harness";
 
 import { page } from "@/tests/helpers/dom";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { useState } from "react";
 import type { MoneyAmountChangeSource } from "./amount";
 
-const { cleanup, fireEvent, render } = await import("@testing-library/react");
+const { cleanup, fireEvent, render, waitFor } = await import("@testing-library/react");
 const {
   MoneyAmountDisplay,
+  MoneyAssetPicker,
+  matchesMoneyAssetOption,
   MoneyNumpad,
   shouldAnimatePrimaryAmount,
 } = await import("./amount");
@@ -36,7 +38,7 @@ function AmountHarness({
   assetId?: string;
   assetLabel?: string;
   assetLocked?: boolean;
-  assetOptions?: ReadonlyArray<{ id: string; label: string }>;
+  assetOptions?: ReadonlyArray<{ id: string; label: string; description?: string }>;
   availableLabel?: string;
   availableAmount?: string | null;
 }) {
@@ -103,6 +105,72 @@ describe("MoneyAmountDisplay", () => {
     fireEvent.click(page().getByRole("button", { name: "Show 25.00 USDC as the primary amount" }));
     expect(document.querySelector("[data-primary-amount] [role='img']")?.getAttribute("aria-label")).toBe("25");
     expect(page().getByLabelText("Native amount").textContent).toBe("25");
+  });
+
+  test("centers a non-reserving primary ticker without a synthetic character width", () => {
+    render(<AmountHarness />);
+
+    const ticker = document.querySelector<HTMLElement>(
+      "[data-primary-amount] [data-slot='money-ticker']",
+    );
+    expect(ticker?.style.minInlineSize).toBe("");
+  });
+
+  test("renders names before tickers, searches both fields, and uses small marks", async () => {
+    const usdc = {
+      id: "usdc",
+      label: "USDC",
+      description: "US dollar",
+      mark: {
+        assetKey: "usdc",
+        name: "US dollar",
+        symbol: "USDC",
+        imageUrl: null,
+        pending: false,
+        currency: "USD",
+      },
+    };
+    const euro = {
+      id: "eurc",
+      label: "EURC",
+      description: "Euro",
+      mark: {
+        assetKey: "eurc",
+        name: "Euro",
+        symbol: "EURC",
+        imageUrl: null,
+        pending: false,
+        currency: "EUR",
+      },
+    };
+    expect(matchesMoneyAssetOption(euro, "Euro")).toBe(true);
+    expect(matchesMoneyAssetOption(euro, "eurc")).toBe(true);
+    expect(matchesMoneyAssetOption(euro, "dollar")).toBe(false);
+
+    const onAssetChange = mock(() => {});
+    const view = render(
+      <MoneyAssetPicker
+        assetId="usdc"
+        assetLabel="USDC"
+        assetCurrency="USD"
+        assetOptions={[usdc, euro]}
+        onAssetChange={onAssetChange}
+      />,
+    );
+    const input = view.getByRole("combobox", { name: "Asset" });
+    expect((input as HTMLInputElement).value).toBe("US dollar");
+    const trigger = input.parentElement?.querySelector("button");
+    expect(trigger).toBeTruthy();
+
+    fireEvent.click(trigger!);
+    await waitFor(() => expect(input.getAttribute("aria-expanded")).toBe("true"));
+    const option = await view.findByRole("option", { name: "Euro EURC" });
+    expect(option.textContent).toBe("EuroEURC");
+    expect(document.querySelectorAll("[data-size='sm']").length).toBeGreaterThanOrEqual(2);
+
+    fireEvent.click(option);
+
+    await waitFor(() => expect(onAssetChange).toHaveBeenCalledWith("eurc"));
   });
 
   test("disables local quick amounts while native is primary and Max fills the available amount", () => {

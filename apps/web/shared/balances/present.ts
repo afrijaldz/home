@@ -127,7 +127,11 @@ export function presentBalanceRows(snapshot: BalancesSnapshot): BalanceRowModel[
 }
 
 export function presentSavedSubtotal(snapshot: BalancesSnapshot): string | null {
-  const vaultShares = snapshot.holdings.filter((holding) => holding.kind === "vault-share");
+  const vaultShares = snapshot.holdings.filter((holding) =>
+    holding.kind === "vault-share" &&
+    holding.balance.status === "ready" &&
+    holding.balance.baseUnits !== "0"
+  );
   return vaultShares.length > 0 ? presentHoldingsSubtotal(vaultShares, snapshot) : null;
 }
 
