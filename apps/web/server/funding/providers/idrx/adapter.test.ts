@@ -12,6 +12,7 @@ import createVaFixture from "./fixtures/create-va.synthetic.json";
 import historyMintedQrisLiveFixture from "./fixtures/history-minted-qris.live.json";
 import historyUnknownFixture from "./fixtures/history-unknown.synthetic.json";
 import { createIdrxSignature, idrxAtomicAmount, idrxProvider } from "./adapter";
+import { IDRX_VA_PAYMENT_METHODS, idrxManifest } from "./manifest";
 
 const DESTINATION = "0x1111111111111111111111111111111111111111" as const;
 const env = {
@@ -34,6 +35,17 @@ const reconciliationIntent = {
   expectedTokenAmountAtomic: "2000050",
   tokenDecimals: 2,
 } satisfies ReconciliationIntent;
+
+// The live binding is QRIS-only (see manifest.ts); the VA code paths are
+// exercised against a manifest that still carries the VA methods.
+const vaManifest = {
+  ...idrxManifest,
+  bindings: idrxManifest.bindings.map((binding) => ({
+    ...binding,
+    paymentMethods: [...IDRX_VA_PAYMENT_METHODS, ...binding.paymentMethods],
+  })),
+};
+const vaProvider = { ...idrxProvider, manifest: vaManifest };
 
 function jsonFixture(value: unknown): Response {
   return Response.json(value);
@@ -92,7 +104,7 @@ function historyRecord(
 }
 
 describeFundingAdapter({
-  provider: idrxProvider,
+  provider: vaProvider,
   region: "ID",
   paymentMethodId: "bank-va-mandiri",
   env,
@@ -136,6 +148,11 @@ describe("IDRX adapter behavior", () => {
     }
   });
 
+  test("offers only QRIS on the live binding until Home users have their own IDRX identity", () => {
+    expect(idrxProvider.manifest.bindings.map((binding) => binding.paymentMethods.map((method) => method.id)))
+      .toEqual([["qris"]]);
+  });
+
   test("keeps every committed provider fixture explicitly synthetic or a dated live capture", () => {
     expect(bindingMismatchesFixture.source).toBe("synthetic");
     expect(createVaFixture.source).toBe("synthetic");
@@ -155,14 +172,14 @@ describe("IDRX adapter behavior", () => {
       expectedTokenAmountAtomic: "2000000",
     } satisfies ReconciliationIntent;
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "qris",
       env,
       fetchImplementation: (async () =>
         Response.json(historyMintedQrisLiveFixture)) as unknown as typeof fetch,
     });
-    await expect(idrxProvider.getOrder(liveIntent, ctx)).resolves.toEqual({
+    await expect(vaProvider.getOrder(liveIntent, ctx)).resolves.toEqual({
       state: "sent",
       providerStatus: "MINTED:PAID",
       settledTokenAmountAtomic: "1986000",
@@ -179,14 +196,14 @@ describe("IDRX adapter behavior", () => {
       expectedTokenAmountAtomic: "1985999",
     } satisfies ReconciliationIntent;
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "qris",
       env,
       fetchImplementation: (async () =>
         Response.json(historyMintedQrisLiveFixture)) as unknown as typeof fetch,
     });
-    await expect(idrxProvider.getOrder(liveIntent, ctx)).resolves.toMatchObject({
+    await expect(vaProvider.getOrder(liveIntent, ctx)).resolves.toMatchObject({
       state: "unknown",
       providerStatus: "INTENT_MISMATCH",
     });
@@ -195,7 +212,7 @@ describe("IDRX adapter behavior", () => {
   test("treats a coded IDRX validation rejection as a definitive no-order rejection", async () => {
     let calls = 0;
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "bank-va-mandiri",
       env,
@@ -209,7 +226,7 @@ describe("IDRX adapter behavior", () => {
         }, { status: 400 });
       }) as unknown as typeof fetch,
     });
-    await expect(idrxProvider.createOrder(intent, ctx)).resolves.toEqual({
+    await expect(vaProvider.createOrder(intent, ctx)).resolves.toEqual({
       outcome: "rejected",
       message: "Please register your MANDIRI bank account first before paying via MANDIRI Virtual Account.",
     });
@@ -235,7 +252,7 @@ describe("IDRX adapter behavior", () => {
       }
       let calls = 0;
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId: "bank-va-mandiri",
         env,
@@ -248,7 +265,7 @@ describe("IDRX adapter behavior", () => {
           }, { status: fixture.status });
         }) as unknown as typeof fetch,
       });
-      const result = await idrxProvider.createOrder(intent, ctx);
+      const result = await vaProvider.createOrder(intent, ctx);
       expect(result.outcome, fixture.name).toBe(fixture.outcome);
       expect(calls, fixture.name).toBe(1);
     }
@@ -257,7 +274,7 @@ describe("IDRX adapter behavior", () => {
   test("keeps provider-assigned references and HMAC-signed rail details behind the adapter", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "bank-va-bri",
       env,
@@ -277,7 +294,7 @@ describe("IDRX adapter behavior", () => {
       }) as unknown as typeof fetch,
     });
 
-    const result = await idrxProvider.createOrder(intent, ctx);
+    const result = await vaProvider.createOrder(intent, ctx);
     expect(result.outcome).toBe("created");
     expect(requests).toHaveLength(1);
     const body = JSON.parse(String(requests[0]?.init.body));
@@ -328,21 +345,21 @@ describe("IDRX adapter behavior", () => {
     ] as const;
     for (const scenario of cases) {
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId: scenario.paymentMethodId,
         env,
         fetchImplementation: (async () =>
           jsonFixture(scenario.response)) as unknown as typeof fetch,
       });
-      const result = await idrxProvider.createOrder(intent, ctx);
+      const result = await vaProvider.createOrder(intent, ctx);
       expect(result.outcome).toBe(scenario.outcome);
     }
   });
 
   test("accepts coherent optional QRIS amount and fee echoes", async () => {
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "qris",
       env,
@@ -355,7 +372,7 @@ describe("IDRX adapter behavior", () => {
         },
       )) as unknown as typeof fetch,
     });
-    const result = await idrxProvider.createOrder(intent, ctx);
+    const result = await vaProvider.createOrder(intent, ctx);
     expect(result).toMatchObject({
       outcome: "created",
       order: { fees: [{ label: "QRIS", amount: "0.50", currency: "IDR" }] },
@@ -365,7 +382,7 @@ describe("IDRX adapter behavior", () => {
   test("accepts matching QRIS and VA history rail echoes", async () => {
     for (const paymentMethodId of ["qris", "bank-va-mandiri"] as const) {
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId,
         env,
@@ -374,7 +391,7 @@ describe("IDRX adapter behavior", () => {
           records: [historyRecord({}, paymentMethodId)],
         })) as unknown as typeof fetch,
       });
-      await expect(idrxProvider.getOrder(reconciliationIntent, ctx)).resolves.toMatchObject({
+      await expect(vaProvider.getOrder(reconciliationIntent, ctx)).resolves.toMatchObject({
         state: "sent",
       });
     }
@@ -393,7 +410,7 @@ describe("IDRX adapter behavior", () => {
     ] as const;
     for (const [userMintStatus, paymentStatus, expected] of cases) {
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId: "qris",
         env,
@@ -402,7 +419,7 @@ describe("IDRX adapter behavior", () => {
           records: [historyRecord({ userMintStatus, paymentStatus })],
         })) as unknown as typeof fetch,
       });
-      const observation = await idrxProvider.getOrder(reconciliationIntent, ctx);
+      const observation = await vaProvider.getOrder(reconciliationIntent, ctx);
       expect(observation.state).toBe(expected);
       expect(observation.state).not.toBe("received");
     }
@@ -418,7 +435,7 @@ describe("IDRX adapter behavior", () => {
           ]
         : [historyRecord(fixture.overrides, fixture.paymentMethodId)];
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId: fixture.paymentMethodId,
         env,
@@ -427,7 +444,7 @@ describe("IDRX adapter behavior", () => {
           return Response.json({ source: "synthetic", records });
         }) as unknown as typeof fetch,
       });
-      const observation = await idrxProvider.getOrder(reconciliationIntent, ctx);
+      const observation = await vaProvider.getOrder(reconciliationIntent, ctx);
       expect(observation.state, fixture.name).toBe("unknown");
       expect(calls, fixture.name).toBe(1);
     }
@@ -435,7 +452,7 @@ describe("IDRX adapter behavior", () => {
 
   test("fails closed on a redirect outside the manifest allowlist", async () => {
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "qris",
       env,
@@ -447,7 +464,7 @@ describe("IDRX adapter behavior", () => {
         },
       })) as unknown as typeof fetch,
     });
-    await expect(idrxProvider.createOrder(intent, ctx)).resolves.toEqual({
+    await expect(vaProvider.createOrder(intent, ctx)).resolves.toEqual({
       outcome: "ambiguous",
     });
   });
@@ -467,13 +484,13 @@ describe("IDRX adapter behavior", () => {
     ];
     for (const response of oversizedResponses) {
       const ctx = createProviderContext({
-        manifest: idrxProvider.manifest,
+        manifest: vaManifest,
         region: "ID",
         paymentMethodId: "qris",
         env,
         fetchImplementation: (async () => response()) as unknown as typeof fetch,
       });
-      await expect(idrxProvider.createOrder(intent, ctx)).resolves.toEqual({
+      await expect(vaProvider.createOrder(intent, ctx)).resolves.toEqual({
         outcome: "ambiguous",
       });
     }
@@ -482,7 +499,7 @@ describe("IDRX adapter behavior", () => {
   test("rejects unsupported precision before an outbound request", async () => {
     let calls = 0;
     const ctx = createProviderContext({
-      manifest: idrxProvider.manifest,
+      manifest: vaManifest,
       region: "ID",
       paymentMethodId: "qris",
       env,
@@ -491,7 +508,7 @@ describe("IDRX adapter behavior", () => {
         return jsonFixture(createQrisFixture);
       }) as unknown as typeof fetch,
     });
-    await expect(idrxProvider.createOrder(
+    await expect(vaProvider.createOrder(
       { ...intent, fiatAmount: "20000.501" },
       ctx,
     )).resolves.toMatchObject({ outcome: "rejected" });
