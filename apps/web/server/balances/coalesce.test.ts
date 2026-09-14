@@ -79,15 +79,16 @@ function setup(options: {
   enumerate?: (cursor?: string | null) => Promise<BalancesEnumeration>;
 }) {
   const store = options.store ?? new MemoryBalanceSnapshotStore();
+  const configuredNow = options.now;
   const events: unknown[] = [];
   let reads = 0;
   let enumerations = 0;
   let clock = 0;
   const service = createBalancesService({
     store,
-    now: typeof options.now === "function"
-      ? options.now
-      : () => new Date(options.now ?? "2026-09-13T12:00:30.000Z"),
+    now: typeof configuredNow === "function"
+      ? configuredNow
+      : () => new Date(configuredNow ?? "2026-09-13T12:00:30.000Z"),
     nowMs: () => clock++,
     log: (event) => events.push(event),
     readUniverse: async () => ({ entries: [] }),
