@@ -139,6 +139,29 @@ describe("BorrowExperience", () => {
     expect(document.body.textContent).not.toContain("$0.00");
   });
 
+  test("keeps last verified overview values visible with a refresh-failure warning", async () => {
+    let failRefresh = false;
+    render(
+      <BorrowExperience
+        session={session()}
+        fetchAccountResource={async () => {
+          if (failRefresh) throw new Error("RPC unavailable");
+          return overview();
+        }}
+      />,
+    );
+    const body = within(document.body);
+    expect(await body.findByText("Active positions")).toBeTruthy();
+
+    failRefresh = true;
+    await getHomeQueryClient().refetchQueries();
+
+    const alert = await body.findByRole("alert");
+    expect(alert.textContent).toContain("Borrow data could not be refreshed");
+    expect(alert.textContent).toContain("Showing values last verified");
+    expect(body.getByText("USDC / cbBTC")).toBeTruthy();
+  });
+
   test("shows reducing-only and urgent risk recovery copy", async () => {
     const snapshot = detail({
       eligibility: { mode: "reducing-only", newRisk: false, reason: "New borrowing is paused." },

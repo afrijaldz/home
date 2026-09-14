@@ -57,6 +57,7 @@ import {
   formatExactPresentationTokenAmount,
   formatHealthFactor,
   formatOracleUsd,
+  formatPresentationDate,
   formatPresentationTokenAmount,
   formatWadPercent,
 } from "@/shared/formatting";
@@ -197,13 +198,17 @@ function BorrowExperienceInner({
 
       {!session?.smartAccount ? <BorrowNotice title="Sign in to view Borrow" /> : null}
       {session?.smartAccount && overview.isPending ? <BorrowOverviewLoading /> : null}
-      {session?.smartAccount && overview.isError && !overview.data ? (
+      {session?.smartAccount && overview.isError ? (
         <BorrowNotice
           tone="error"
           role="alert"
-          title="Borrow is unavailable"
+          title={overview.data ? "Borrow data could not be refreshed" : "Borrow is unavailable"}
           action={<Button variant="secondary" onClick={() => void overview.refetch()}>Retry</Button>}
-        >Current market and position values could not be verified. No zero values are shown.</BorrowNotice>
+        >
+          {overview.data
+            ? `Showing values last verified ${formatPresentationDate(overview.data.discovery.fetchedAt, { regionId, style: "date-time-zone" })}; current values could not be verified.`
+            : "Current market and position values could not be verified. No zero values are shown."}
+        </BorrowNotice>
       ) : null}
 
       {overview.data && session ? (
@@ -442,13 +447,17 @@ function BorrowMarketDetail({
 
       {!session?.smartAccount ? <BorrowNotice title="Sign in to view this market" /> : null}
       {session?.smartAccount && detail.isPending ? <BorrowDetailLoading /> : null}
-      {session?.smartAccount && detail.isError && !snapshot ? (
+      {session?.smartAccount && detail.isError ? (
         <BorrowNotice
           tone="error"
           role="alert"
-          title="Market values are unavailable"
+          title={snapshot ? "Market values could not be refreshed" : "Market values are unavailable"}
           action={<Button variant="secondary" onClick={() => void detail.refetch()}>Retry</Button>}
-        >Wallet balances, position values, and limits could not be verified. They are not zero.</BorrowNotice>
+        >
+          {snapshot
+            ? `Showing values last verified ${formatPresentationDate(snapshot.source.fetchedAt, { regionId, style: "date-time-zone" })}; current balances, health, and limits could not be verified.`
+            : "Wallet balances, position values, and limits could not be verified. They are not zero."}
+        </BorrowNotice>
       ) : null}
       {snapshot ? (
         <>
