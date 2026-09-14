@@ -16,7 +16,7 @@ Everything in this document serves that. Anything that does not is deliberately 
 |---|---|---|
 | Coinbase Onramp (US, USDC) | Headless Apple Pay provider on the seam (`providers/coinbase/`), embedded orders, core-owned sandbox mode | Awaiting Coinbase's production enablement of embedded orders and the funded end-to-end proof ([#294](https://github.com/jessepollak/home/issues/294)); CDP domain allowlisting for hosted previews. |
 | Ripio Ramps (AR wARS, CO wCOP) | Adapter and Add money flow on `main`; inert until every binding environment variable is set | Ripio must run the per-provider checklist; no live provider call has been made. |
-| IDRX (ID) | Adapter and Add money flow on `main`; inert until every binding environment variable is set | IDRX must run the per-provider checklist; no live provider call has been made. |
+| IDRX (ID) | Adapter and Add money flow on `main`; inert until every binding environment variable is set | IDRX ran the checklist against production on 2026-09-14 (hosted QRIS, `received`); VA needs a bank account registered on the IDRX account. |
 | MXNB, XSGD, TRYB | Issuer scaffolds tracked in [#295](https://github.com/jessepollak/home/issues/295) have not started | Adapter, manifest, fixtures, and issuer confirmation. |
 
 Each route rebuilt the same things. The seam builds them once.

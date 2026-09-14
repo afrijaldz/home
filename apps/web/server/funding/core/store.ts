@@ -70,6 +70,7 @@ export interface FundingOrderStore {
     state: ReportedState | "sent-unverified";
     providerStatus: string;
     providerTransactionHash?: `0x${string}` | null;
+    expectedTokenAmountAtomic?: string;
     expectedVersion: number;
     updatedAt: string;
   }): Promise<FundingOrder | null>;
@@ -176,6 +177,7 @@ export class MemoryFundingOrderStore implements FundingOrderStore {
       state,
       providerStatus: input.providerStatus,
       ...(input.providerTransactionHash ? { providerTransactionHash: input.providerTransactionHash } : {}),
+      ...(input.expectedTokenAmountAtomic ? { expectedTokenAmountAtomic: input.expectedTokenAmountAtomic } : {}),
       updatedAt: input.updatedAt,
       version: order.version + 1,
     });
