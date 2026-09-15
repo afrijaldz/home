@@ -9,7 +9,11 @@ import {
 } from "@/client/query/query-client";
 import { balancesSnapshotFixture } from "@/shared/balances/fixtures";
 import type { BalancesState, FetchBalances } from "@/shared/balances/types";
-import { useBalances } from "./use-balances";
+import {
+  balancesStaleRefetchMs,
+  nextStaleRefetchDelay,
+  useBalances,
+} from "./use-balances";
 
 const session = {
   subject: "subject-a",
@@ -42,6 +46,23 @@ afterEach(() => {
 });
 
 describe("useBalances", () => {
+  test("bounds completed stale refetches and ignores interval recomputation", () => {
+    const polling = { identity: "", dataUpdatedAt: 0, completedRefetches: 0 };
+    const stale = { ...balancesSnapshotFixture, stale: true as const };
+    expect(nextStaleRefetchDelay(polling, stale, "owner-a", 100))
+      .toBe(balancesStaleRefetchMs);
+    expect(nextStaleRefetchDelay(polling, stale, "owner-a", 100))
+      .toBe(balancesStaleRefetchMs);
+    for (const dataUpdatedAt of [101, 102, 103]) {
+      expect(nextStaleRefetchDelay(polling, stale, "owner-a", dataUpdatedAt))
+        .toBe(balancesStaleRefetchMs);
+    }
+    expect(nextStaleRefetchDelay(polling, stale, "owner-a", 104)).toBeFalse();
+    expect(nextStaleRefetchDelay(polling, stale, "owner-b", 104))
+      .toBe(balancesStaleRefetchMs);
+    expect(nextStaleRefetchDelay(polling, balancesSnapshotFixture, "owner-b", 105))
+      .toBeFalse();
+  });
   test("uses the owner balances key and persists the whole snapshot", async () => {
     render(<Harness fetchBalances={async () => balancesSnapshotFixture} />);
     await waitFor(() => expect(document.body.textContent).toBe("US:3"));
