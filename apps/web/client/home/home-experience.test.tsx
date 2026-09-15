@@ -6,6 +6,7 @@ import { useState, type ComponentProps } from "react";
 import type { AccountWalletSdkBoundary } from "@/client/account/cdp-client";
 import type { SessionFetch, VerifiedAccountSession } from "@/client/account/session-client";
 import { BORROW_MARKET_ID } from "@/shared/borrowing/config";
+import type { BalanceRowModel, BalancesPresentation } from "@/shared/balances/present";
 
 const replaceCalls: string[] = [];
 const pushCalls: string[] = [];
@@ -194,13 +195,14 @@ async function waitForVerifiedShell() {
   });
 }
 
-function NestedInvestFixture() {
+function NestedInvestFixture({ balancesReturn = false }: { balancesReturn?: boolean }) {
   const [assetOpen, setAssetOpen] = useState(false);
   useNestedAppChrome(
     assetOpen
       ? {
           title: "US dollar",
-          backLabel: "Back to Invest",
+          // "Back" is the production invariant that arms Balances asset-return provenance.
+          backLabel: balancesReturn ? "Back" : "Back to Invest",
           onBack: () => setAssetOpen(false),
         }
       : null,
@@ -236,6 +238,27 @@ HTMLElement.prototype.scrollTo = function scrollTo(
     : optionsOrX?.top ?? 0;
 };
 
+let restoreAnimationFrames: (() => void) | null = null;
+function controlAnimationFrames() {
+  const request = window.requestAnimationFrame;
+  const cancel = window.cancelAnimationFrame;
+  let id = 0;
+  const queued = new Map<number, FrameRequestCallback>();
+  window.requestAnimationFrame = (callback) => (queued.set(++id, callback), id);
+  window.cancelAnimationFrame = (frame) => { queued.delete(frame); };
+  restoreAnimationFrames = () => {
+    window.requestAnimationFrame = request;
+    window.cancelAnimationFrame = cancel;
+    queued.clear();
+    restoreAnimationFrames = null;
+  };
+  return { pending: () => queued.size, flush: () => {
+    const callbacks = [...queued.values()];
+    queued.clear();
+    callbacks.forEach((callback) => callback(performance.now()));
+  } };
+}
+
 function resetHistory() {
   replaceCalls.length = 0;
   pushCalls.length = 0;
@@ -246,6 +269,7 @@ function resetHistory() {
 }
 
 afterEach(() => {
+  restoreAnimationFrames?.();
   cleanup();
   getHomeQueryClient().clear();
   window.localStorage.clear();
@@ -357,6 +381,8 @@ describe("Home shell auth and privacy", () => {
     );
     await waitForVerifiedShell();
     expect(page().getAllByText("$12.34").length).toBeGreaterThan(0);
+    const main = page().getByRole("main");
+    main.scrollTop = 300;
 
     view.rerender(
       <HomeHarness
@@ -372,6 +398,7 @@ describe("Home shell auth and privacy", () => {
       await pendingSession.promise;
     });
     await waitForVerifiedShell();
+    await waitFor(() => expect(main.scrollTop).toBe(0));
   });
 
   test("waits for native logout before dashboard navigation", async () => {
@@ -618,6 +645,106 @@ describe("Home shell routing and intents", () => {
     expect(presentationCalls).toBe(0);
   });
 
+  test("preserves Balances offset across background value and topology refreshes", async () => {
+    window.localStorage.setItem("home.country.v1", "US");
+    const accountSdk = sdk({ isSignedIn: true, ownerKey: OWNER });
+    const cashRow: BalanceRowModel = {
+      key: "usdc",
+      group: "cash",
+      name: "US dollar",
+      mark: { kind: "flag", currency: "USD" },
+      primary: "$12.34",
+      secondary: null,
+      tone: "default",
+    };
+    const presentation: BalancesPresentation = {
+      status: "ready",
+      displayTotal: "$12.34",
+      totalStatus: "complete",
+      groups: [{
+        id: "cash",
+        label: "Cash",
+        displaySubtotal: "$12.34",
+        rows: [cashRow],
+      }],
+      breakdown: [{ id: "cash", label: "Cash", value: "$12.34", weight: 1_000 }],
+      rows: [cashRow],
+      hiddenRows: [],
+      hiddenCount: 0,
+    };
+    const view = render(
+      <HomeHarness accountSdk={accountSdk} initialPanel="balances" assetBalances={presentation} />,
+    );
+    await waitForVerifiedShell();
+    const main = page().getByRole("main");
+    main.scrollTop = 275;
+
+    view.rerender(
+      <HomeHarness
+        accountSdk={accountSdk}
+        initialPanel="balances"
+        assetBalances={{
+          ...presentation,
+          displayTotal: "$99.00",
+          groups: [{
+            ...presentation.groups[0]!,
+            displaySubtotal: "$99.00",
+            rows: [{ ...cashRow, name: "US Dollar", primary: "$99.00" }],
+          }],
+          rows: [{ ...cashRow, name: "US Dollar", primary: "$99.00" }],
+        }}
+      />,
+    );
+    await waitFor(() => expect(page().getAllByText("$99.00").length).toBeGreaterThan(0));
+    expect(main.scrollTop).toBe(275);
+
+    const investmentRow: BalanceRowModel = {
+      ...cashRow,
+      key: "eth",
+      group: "asset",
+      name: "Ethereum",
+      primary: "$50.00",
+    };
+    view.rerender(
+      <HomeHarness
+        accountSdk={accountSdk}
+        initialPanel="balances"
+        assetBalances={{
+          ...presentation,
+          groups: [
+            ...presentation.groups,
+            {
+              id: "investments",
+              label: "Investments",
+              displaySubtotal: "$50.00",
+              rows: [investmentRow],
+            },
+          ],
+          rows: [cashRow, investmentRow],
+        }}
+      />,
+    );
+    await page().findAllByText("Ethereum");
+    expect(main.scrollTop).toBe(275);
+
+    const dust = { ...cashRow, key: "dust", name: "Dust dollar", primary: "$0.01" };
+    view.rerender(<HomeHarness accountSdk={accountSdk} initialPanel="balances"
+      presentAssetBalances={(show) => ({
+        ...presentation,
+        groups: [{ ...presentation.groups[0]!, rows: show ? [cashRow, dust] : [cashRow] }],
+        rows: show ? [cashRow, dust] : [cashRow],
+        hiddenRows: show ? [] : [dust],
+        hiddenCount: 1,
+      })}
+    />);
+    fireEvent.click(page().getByRole("button", { name: "Show" }));
+    await page().findAllByText("Dust dollar");
+    expect(main.scrollTop).toBe(275);
+    fireEvent.click(page().getByRole("button", { name: "Hide small balances" }));
+    await waitFor(() => expect(page().queryByText("Dust dollar")).toBeNull());
+    expect(main.scrollTop).toBe(275);
+  });
+
   test("a group's More row opens the panel anchored to that group; absent groups show no row", async () => {
     render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} />);
     await waitForVerifiedShell();
@@ -762,5 +889,104 @@ describe("Home shell routing and intents", () => {
     await waitForVerifiedShell();
     expect(await page().findByRole("dialog", { name: "Send" })).toBeTruthy();
     expect(page().getAllByRole("dialog", { name: "Send" })).toHaveLength(1);
+  });
+});
+
+describe("Balances scope scroll interleavings (#485)", () => {
+  const balancesLocation = { panel: "balances" as const, account: null, shelf: null, asset: null, group: null, market: null };
+  for (const mode of ["Account", "asset", "history"] as const) {
+    test(`scope change cancels the queued ${mode} restore`, async () => {
+      window.localStorage.setItem("home.country.v1", "US");
+      const startsInBalances = mode !== "history";
+      syncLocation(startsInBalances ? "/balances" : "/home");
+      historyEntries = [window.location.pathname];
+      const pending = deferred<Response>();
+      const view = render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })}
+        initialPanel={startsInBalances ? "balances" : "home"}
+        initialLocation={startsInBalances ? balancesLocation : undefined}
+        investContent={<NestedInvestFixture balancesReturn />}
+      />);
+      await waitForVerifiedShell();
+      const frames = controlAnimationFrames();
+      const main = page().getByRole("main");
+      main.scrollTop = 280;
+      if (mode === "Account") {
+        fireEvent.click(page().getByRole("button", { name: "Account" }));
+        await page().findByRole("combobox", { name: "Country" });
+        fireEvent.click(page().getByRole("button", { name: "Done" }));
+      } else {
+        if (mode === "history") {
+          fireEvent.scroll(main);
+          act(() => frames.flush());
+        }
+        fireEvent.click(within(page().getByRole("navigation", { name: "Main navigation" })).getByRole("button", { name: "Invest" }));
+        if (mode === "asset") {
+          fireEvent.click(page().getByRole("button", { name: "Open asset details" }));
+          fireEvent.click(page().getByRole("button", { name: "Back" }));
+        }
+        act(() => popHistory());
+      }
+      await waitFor(() => expect(main.scrollTop).toBe(280));
+      expect(frames.pending()).toBeGreaterThan(0);
+      view.rerender(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER_B })}
+        sessionFetch={() => pending.promise}
+        initialPanel={startsInBalances ? "balances" : "home"}
+        initialLocation={startsInBalances ? balancesLocation : undefined}
+        investContent={<NestedInvestFixture balancesReturn />}
+      />);
+      await act(async () => {
+        pending.resolve(Response.json(session(ADDRESS_B, "subject-home-b"))); await pending.promise;
+      });
+      await waitForVerifiedShell();
+      await waitFor(() => expect(main.scrollTop).toBe(0));
+      act(() => frames.flush());
+      expect(main.scrollTop).toBe(0);
+    });
+  }
+  test("readiness, explicit scope, sign-out, and new baseline stay ordered", async () => {
+    window.localStorage.setItem("home.country.v1", "GB");
+    const frames = controlAnimationFrames();
+    const accountSdk = sdk({ isSignedIn: true, ownerKey: OWNER });
+    const view = render(<HomeHarness accountSdk={accountSdk} initialPanel="balances" />);
+    const main = page().getByRole("main");
+    main.scrollTop = 260;
+    act(() => frames.flush());
+    await waitForVerifiedShell();
+    expect(main.scrollTop).toBe(260);
+    view.rerender(<HomeHarness accountSdk={accountSdk} initialPanel="balances" selectedRegionId="US" />);
+    await waitFor(() => expect(main.scrollTop).toBe(0));
+    view.rerender(<HomeHarness accountSdk={sdk()} initialPanel="balances" />);
+    await page().findByLabelText("Signed out");
+    main.scrollTop = 190;
+    view.rerender(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER_B })} sessionFetch={async () => Response.json(session(ADDRESS_B, "subject-home-b"))} initialPanel="balances" />);
+    await waitForVerifiedShell();
+    expect(main.scrollTop).toBe(190);
+  });
+  test("cold canonical A to B cancels the old group RAF, re-anchors once, and consumes", async () => {
+    window.localStorage.setItem("home.country.v1", "US");
+    syncLocation("/balances/cash"); historyEntries = ["/balances/cash"];
+    const pending = deferred<Response>(); const coldLocation = { ...balancesLocation, group: "cash" as const };
+    const view = render(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER })} initialPanel="balances" initialLocation={coldLocation} />);
+    await waitForVerifiedShell();
+    const frames = controlAnimationFrames();
+    const main = page().getByRole("main");
+    let anchors = 0;
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = () => { anchors += 1; main.scrollTop = 440; };
+    try {
+      fireEvent.click(page().getByRole("button", { name: "Back" })); fireEvent.click(page().getByRole("button", { name: "More Cash" }));
+      expect(frames.pending()).toBeGreaterThan(0);
+      view.rerender(<HomeHarness accountSdk={sdk({ isSignedIn: true, ownerKey: OWNER_B })} sessionFetch={() => pending.promise} />);
+      await act(async () => {
+        pending.resolve(Response.json(session(ADDRESS_B, "subject-home-b"))); await pending.promise;
+      });
+      await waitForVerifiedShell();
+      await waitFor(() => expect(anchors).toBe(1));
+      act(() => frames.flush());
+      expect(anchors).toBe(1);
+      expect(main.scrollTop).toBe(440);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
   });
 });

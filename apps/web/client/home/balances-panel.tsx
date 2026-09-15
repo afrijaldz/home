@@ -50,8 +50,11 @@ export function homeBalancesRestoreScope(input: {
   return `${ownerKey}\u0000${provider}\u0000${subject}\u0000${smartAccount.toLowerCase()}\u0000${region}`;
 }
 
-export function balancesListKey(rows: readonly BalanceRowModel[]): string {
-  return JSON.stringify(rows);
+export function balancesAnchorTopologyKey(presentation: BalancesPresentation): string {
+  return JSON.stringify({
+    groups: presentation.groups.map((group) => group.id),
+    rows: presentation.rows.map(({ key, group }) => ({ key, group })),
+  });
 }
 
 export function useBalancesRevealWindow(
@@ -59,11 +62,12 @@ export function useBalancesRevealWindow(
   rows: readonly BalanceRowModel[],
   resetSignal: number,
 ) {
-  const [revealWindow, setRevealWindow] = useState<BalancesRevealWindow>(() => {
-    const key = `${scope ?? ""}\u0000${balancesListKey(rows)}`;
-    return { key, resetSignal, count: BALANCES_BATCH_SIZE };
-  });
-  const key = `${scope ?? ""}\u0000${balancesListKey(rows)}`;
+  const [revealWindow, setRevealWindow] = useState<BalancesRevealWindow>(() => ({
+    key: scope ?? "",
+    resetSignal,
+    count: BALANCES_BATCH_SIZE,
+  }));
+  const key = scope ?? revealWindow.key;
   if (revealWindow.key !== key || revealWindow.resetSignal !== resetSignal) {
     setRevealWindow({ key, resetSignal, count: BALANCES_BATCH_SIZE });
   }
@@ -75,7 +79,10 @@ export function useBalancesRevealWindow(
         ? {
             key,
             resetSignal: current.resetSignal,
-            count: Math.min(current.count + BALANCES_BATCH_SIZE, rows.length),
+            count: Math.max(
+              current.count,
+              Math.min(current.count + BALANCES_BATCH_SIZE, rows.length),
+            ),
           }
         : current,
     );
