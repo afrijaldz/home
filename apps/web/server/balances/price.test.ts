@@ -107,6 +107,7 @@ function createTestPricer(
   options: Parameters<typeof createBalancesPricer>[0] = {},
 ) {
   return createBalancesPricer({
+    now: () => new Date("2026-09-13T12:00:00.000Z"),
     ...options,
     priceStore: options.priceStore ?? new MemoryPriceObservationStore(),
   });
@@ -198,8 +199,8 @@ describe("balances pricing", () => {
 
     const result = await price({ ...read, holdings: rows }, "US");
     expect(calls).toBe(2);
-    expect(result.slice(0, 25).every(({ value }) => value.status === "priced")).toBeTrue();
-    expect(result[25]?.value).toEqual({
+    expect(result.holdings.slice(0, 25).every(({ value }) => value.status === "priced")).toBeTrue();
+    expect(result.holdings[25]?.value).toEqual({
       status: "unpriced",
       reason: "price-unavailable",
     });
@@ -216,19 +217,19 @@ describe("balances pricing", () => {
     });
 
     const result = await price(read, "DE");
-    expect(result.find(({ id }) => id === dust.id)?.value).toMatchObject({
+    expect(result.holdings.find(({ id }) => id === dust.id)?.value).toMatchObject({
       status: "priced",
       currency: "EUR",
     });
-    expect(result.find(({ id }) => id === stale.id)?.value).toEqual({
+    expect(result.holdings.find(({ id }) => id === stale.id)?.value).toEqual({
       status: "unpriced",
       reason: "price-stale",
     });
-    expect(result.find(({ id }) => id === "usdc")?.cashValue).toMatchObject({
+    expect(result.holdings.find(({ id }) => id === "usdc")?.cashValue).toMatchObject({
       status: "priced",
       currency: "USD",
     });
-    expect(result.find(({ id }) => id === "usdc")?.value).toMatchObject({
+    expect(result.holdings.find(({ id }) => id === "usdc")?.value).toMatchObject({
       status: "priced",
       currency: "EUR",
     });
@@ -246,11 +247,11 @@ describe("balances pricing", () => {
       ...read,
       holdings: [usdc],
     }, "DE");
-    expect(result[0]?.value).toEqual({
+    expect(result.holdings[0]?.value).toEqual({
       status: "unpriced",
       reason: "fx-unavailable",
     });
-    expect(result[0]?.cashValue).toMatchObject({
+    expect(result.holdings[0]?.cashValue).toMatchObject({
       status: "priced",
       currency: "USD",
     });
@@ -273,7 +274,7 @@ describe("balances pricing", () => {
 
     const result = await price({ ...read, holdings: [wallet] }, "US");
     expect(batches).toEqual([]);
-    expect(result[0]?.value).toEqual({
+    expect(result.holdings[0]?.value).toEqual({
       status: "unpriced",
       reason: "below-market-gate",
     });
@@ -307,15 +308,15 @@ describe("balances pricing", () => {
       "US",
     );
     expect(batches).toEqual([[admitted.key, gated.key, missingLiquidity.key]]);
-    expect(result[0]?.value).toMatchObject({
+    expect(result.holdings[0]?.value).toMatchObject({
       status: "priced",
       currency: "USD",
     });
-    expect(result[1]?.value).toEqual({
+    expect(result.holdings[1]?.value).toEqual({
       status: "unpriced",
       reason: "below-market-gate",
     });
-    expect(result[2]?.value).toEqual({
+    expect(result.holdings[2]?.value).toEqual({
       status: "unpriced",
       reason: "below-market-gate",
     });
@@ -376,21 +377,21 @@ describe("balances pricing", () => {
     const result = await price({ ...read, holdings: [idrx] }, "ID");
     expect(BALANCES_PRICE_MAX_AGE_MS).toBe(24 * 60 * 60 * 1_000);
     if (expected === "priced") {
-      expect(result[0]?.value).toMatchObject({
+      expect(result.holdings[0]?.value).toMatchObject({
         status: "priced",
         currency: "IDR",
         asOf: new Date(now.getTime() - ageMs).toISOString(),
       });
-      expect(result[0]?.cashValue).toMatchObject({
+      expect(result.holdings[0]?.cashValue).toMatchObject({
         status: "priced",
         currency: "IDR",
       });
     } else {
-      expect(result[0]?.value).toEqual({
+      expect(result.holdings[0]?.value).toEqual({
         status: "unpriced",
         reason: "price-stale",
       });
-      expect(result[0]?.cashValue).toEqual({
+      expect(result.holdings[0]?.cashValue).toEqual({
         status: "unpriced",
         reason: "price-stale",
       });
@@ -420,9 +421,9 @@ describe("balances pricing", () => {
 
     const result = await price({ ...read, holdings: [usdc] }, "US");
     if (expected === "priced") {
-      expect(result[0]?.value).toMatchObject({ status: "priced", asOf });
+      expect(result.holdings[0]?.value).toMatchObject({ status: "priced", asOf });
     } else {
-      expect(result[0]?.value).toEqual({
+      expect(result.holdings[0]?.value).toEqual({
         status: "unpriced",
         reason: "price-stale",
       });
@@ -452,7 +453,7 @@ describe("balances pricing", () => {
     });
 
     const result = await price({ ...read, holdings: [usdc] }, "US");
-    expect(result[0]?.value.status).toBe("priced");
+    expect(result.holdings[0]?.value.status).toBe("priced");
     expect(reads).toBe(0);
     expect(scheduled).toHaveLength(1);
     await scheduled[0]!();
@@ -465,6 +466,8 @@ describe("balances pricing", () => {
     const priceStore: PriceObservationStore = {
       getMany: async () => [],
       putMany: async (observations) => { writes.push([...observations]); },
+      getAttempts: async () => [],
+      putAttempts: async () => undefined,
     };
     const newer = "2026-09-13T11:59:30.000Z";
     const price = createTestPricer({
@@ -489,6 +492,8 @@ describe("balances pricing", () => {
     const priceStore: PriceObservationStore = {
       getMany: async () => [],
       putMany: async (observations) => { writes.push([...observations]); },
+      getAttempts: async () => [],
+      putAttempts: async () => undefined,
     };
     const price = createTestPricer({
       priceStore,
@@ -499,6 +504,75 @@ describe("balances pricing", () => {
     await price({ ...read, holdings: [usdc] }, "US");
     await price({ ...read, holdings: [usdc] }, "US");
     expect(writes).toHaveLength(1);
+  });
+
+  test("retries an identical observation after transient persistence failure", async () => {
+    let currentTime = new Date("2026-09-13T12:00:00.000Z");
+    const memory = new MemoryPriceObservationStore();
+    let writes = 0;
+    const priceStore: PriceObservationStore = {
+      getMany: (keys) => memory.getMany(keys),
+      getAttempts: (keys) => memory.getAttempts(keys),
+      putAttempts: (attempts) => memory.putAttempts(attempts),
+      putMany: async (observations) => {
+        writes += 1;
+        if (writes === 1) throw new Error("transient write failure");
+        await memory.putMany(observations);
+      },
+    };
+    const price = createBalancesPricer({
+      priceStore,
+      now: () => currentTime,
+      readPrices: async (inputs) => inputs.map((input) => quote(input.assetKey, "fresh")),
+    });
+
+    await price({ ...read, holdings: [usdc] }, "US");
+    currentTime = new Date("2026-09-13T12:01:01.000Z");
+    const retried = await price({ ...read, holdings: [usdc] }, "US");
+
+    expect(writes).toBe(2);
+    expect(await memory.getMany([usdc.key])).toHaveLength(1);
+    expect(retried.holdings[0]?.value.status).toBe("priced");
+  });
+
+  test("keeps concurrent bootstrap FX available when its storage write is deduplicated", async () => {
+    const memory = new MemoryPriceObservationStore();
+    const readsReady = deferred<void>();
+    let reads = 0;
+    const emptyConcurrentReads = async () => {
+      reads += 1;
+      if (reads === 4) readsReady.resolve();
+      await readsReady.promise;
+      return [];
+    };
+    const store: PriceObservationStore = {
+      getMany: emptyConcurrentReads,
+      getAttempts: emptyConcurrentReads,
+      putMany: (observations) => memory.putMany(observations),
+      putAttempts: (attempts) => memory.putAttempts(attempts),
+    };
+    const fxReads = [deferred<ReturnType<typeof rates>>(), deferred<ReturnType<typeof rates>>()];
+    let fxIndex = 0;
+    const price = createBalancesPricer({
+      priceStore: store,
+      now: () => new Date("2026-09-13T12:00:00.000Z"),
+      readPrices: async (inputs) => inputs.map((input) => quote(input.assetKey, "fresh")),
+      readExchangeRates: () => fxReads[fxIndex++]!.promise,
+    });
+
+    const first = price({ ...read, holdings: [usdc] }, "DE");
+    await Promise.resolve();
+    const second = price({ ...read, holdings: [usdc] }, "DE");
+    await Promise.resolve();
+    fxReads[0]!.resolve(rates());
+    await first;
+    fxReads[1]!.resolve(rates());
+    const secondResult = await second;
+
+    expect(secondResult.holdings[0]?.value).toMatchObject({
+      status: "priced",
+      currency: "EUR",
+    });
   });
 
   test("falls back to a stored quote when a Codex batch fails", async () => {
@@ -517,10 +591,78 @@ describe("balances pricing", () => {
     });
 
     const result = await price({ ...read, holdings: [usdc] }, "US");
-    expect(result[0]?.value).toMatchObject({
+    expect(result.holdings[0]?.value).toMatchObject({
       status: "priced",
       asOf: "2026-09-13T11:00:00.000Z",
     });
+  });
+
+  test("cached rows never await providers and expose revalidation only for a degraded scheduled value", async () => {
+    const scheduled: Array<() => Promise<unknown>> = [];
+    let codexReads = 0;
+    let coinbaseReads = 0;
+    const price = createTestPricer({
+      schedule: (task) => scheduled.push(typeof task === "function" ? task : () => task),
+      readPrices: async (inputs) => {
+        codexReads += 1;
+        return inputs.map((input) => quote(input.assetKey, "fresh"));
+      },
+      readExchangeRates: async () => {
+        coinbaseReads += 1;
+        return rates();
+      },
+    });
+
+    const result = await price({ ...read, holdings: [usdc] }, "US", "cached");
+    expect(result.holdings[0]?.value).toEqual({ status: "unpriced", reason: "price-unavailable" });
+    expect(result.revalidating).toBeTrue();
+    expect(result.durationMs.codex).toBe(0);
+    expect(result.durationMs.coinbase).toBe(0);
+    expect(codexReads).toBe(0);
+    expect(coinbaseReads).toBe(0);
+    expect(scheduled).toHaveLength(1);
+    await scheduled[0]!();
+    expect(codexReads).toBe(1);
+    expect(coinbaseReads).toBe(0);
+  });
+
+  test("suppresses missing attempts for fifteen minutes", async () => {
+    const store = new MemoryPriceObservationStore();
+    await store.putAttempts([{
+      assetKey: usdc.key,
+      attemptAt: "2026-09-13T11:50:00.000Z",
+      status: "missing",
+    }]);
+    const scheduled: unknown[] = [];
+    const price = createTestPricer({
+      priceStore: store,
+      schedule: (task) => scheduled.push(task),
+      readPrices: async () => { throw new Error("must not run"); },
+    });
+
+    const result = await price({ ...read, holdings: [usdc] }, "US", "cached");
+    expect(result.revalidating).toBeFalse();
+    expect(scheduled).toEqual([]);
+  });
+
+  test("uses USD identity without reading or storing Coinbase FX", async () => {
+    const store = new MemoryPriceObservationStore();
+    await store.putMany([{
+      assetKey: usdc.key,
+      unitPrice: { atoms: "1", scale: 0 },
+      asOf: "2026-09-13T11:59:00.000Z",
+      fetchedAt: "2026-09-13T12:00:00.000Z",
+    }]);
+    let coinbaseReads = 0;
+    const price = createTestPricer({
+      priceStore: store,
+      readExchangeRates: async () => { coinbaseReads += 1; return rates(); },
+    });
+
+    const result = await price({ ...read, holdings: [usdc] }, "US", "cached");
+    expect(result.holdings[0]?.value.status).toBe("priced");
+    expect(coinbaseReads).toBe(0);
+    expect(await store.getMany(["fx:USD:USD"])).toEqual([]);
   });
 
   test("uses one identical full registry batch across wallet balances", async () => {
@@ -557,7 +699,6 @@ describe("balances pricing", () => {
     }, "US");
 
     expect(batches).toEqual([
-      [firstRegistry.key, secondRegistry.key],
       [firstRegistry.key, secondRegistry.key],
     ]);
   });
