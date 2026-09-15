@@ -8,7 +8,7 @@ import type {
 } from "@/shared/funding/provider-contract";
 import { MemoryFundingOrderStore } from "./store";
 import { FundingCore, resolveClientIp, isPrivateIp } from "./service";
-import { resolveFundingMode } from "./provider-context";
+import { FundingProviderConfigurationError, resolveFundingMode, resolveWebhookEnvironment } from "./provider-context";
 
 const session: VerifiedAccountSession = { user: { subject: "user" }, accountProvider: "base-account", smartAccount: { address: "0x1111111111111111111111111111111111111111", chainId: 8453 } };
 const manifest = { id: "fixture", displayName: "Fixture", docsUrl: "https://example.com", onramp: { apiOrigins: ["https://example.com"], reference: "home" }, bindings: [{ region: "ID", assetId: "base:idrx", currency: "IDR", directions: { onramp: { paymentMethods: [{ id: "bank", label: "Bank" }], env: ["FIXTURE_KEY"] } } }] } as const satisfies FundingProviderManifest;
@@ -289,8 +289,107 @@ describe("FundingCore", () => {
     }]);
   });
 
+  test("binds webhook signatures to the order region while preserving shared-secret manifests", async () => {
+    const run = async (webhookEnv: string | { US: string; ID: string }, signature: string, removeOrderRegionSecret = false) => {
+      let refreshes = 0;
+      const store = new MemoryFundingOrderStore();
+      const bindings = [
+        { region: "US" as const, assetId: "base:usdc", currency: "USD" as const, directions: { onramp: { paymentMethods: [{ id: "bank", label: "Bank" }], env: [typeof webhookEnv === "string" ? webhookEnv : webhookEnv.US] } } },
+        { region: "ID" as const, assetId: "base:idrx", currency: "IDR" as const, directions: { onramp: { paymentMethods: [{ id: "bank", label: "Bank" }], env: [typeof webhookEnv === "string" ? webhookEnv : webhookEnv.ID] } } },
+      ];
+      const regionalManifest = { id: "regional", displayName: "Regional", docsUrl: "https://example.com", onramp: { apiOrigins: ["https://example.com"], reference: "home" as const, webhook: { signatureHeader: "x-signature", env: webhookEnv } }, bindings } satisfies FundingProviderManifest;
+      const provider: FundingProvider = { manifest: regionalManifest, onramp: {
+        async createOrder(input, ctx) { return { outcome: "created", order: { providerOrderId: "regional-order", tokenAddress: ctx.binding.asset.address, expectedTokenAmountAtomic: input.quote!.tokenAmountAtomic, fees: [], expiresAt: null, instructions: { kind: "bank-transfer", rail: "VA", accountNumber: "1", amount: input.fiatAmount, currency: ctx.binding.currency } } }; },
+        async getOrder() { refreshes += 1; return { state: "awaiting-payment", providerStatus: "pending" }; },
+        verifyWebhook(_raw, headers, ctx) { const name = resolveWebhookEnvironment(regionalManifest.onramp.webhook, ctx.binding.region); return name && ctx.env[name] === headers.get("x-signature") ? { providerOrderId: "regional-order" } : null; },
+      } };
+      const quoteSecretName = "FUNDING_" + "QUOTE_SECRET";
+      const usSecretName = typeof webhookEnv === "string" ? webhookEnv : webhookEnv.US;
+      const idSecretName = typeof webhookEnv === "string" ? webhookEnv : webhookEnv.ID;
+      const fullEnv = { [quoteSecretName]: "q".repeat(32), [usSecretName]: "us-secret", [idSecretName]: typeof webhookEnv === "string" ? "us-secret" : "id-secret" };
+      const creatingCore = new FundingCore({ providers: [provider], store, env: fullEnv, currentBaseBlock: async () => "1", verifyReceipt: async () => null });
+      const quote = await creatingCore.createQuote(session, { providerId: "regional", region: "ID", paymentMethod: "bank", fiatAmount: "1000" }, "https://home.example");
+      await creatingCore.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example");
+      const runtimeEnv = removeOrderRegionSecret && typeof webhookEnv !== "string"
+        ? { [quoteSecretName]: "q".repeat(32), [webhookEnv.US]: "us-secret" }
+        : fullEnv;
+      const core = new FundingCore({ providers: [provider], store, env: runtimeEnv, currentBaseBlock: async () => "1", verifyReceipt: async () => null });
+      const result = await core.handleWebhook("regional", new Uint8Array(), new Headers({ "x-signature": signature }));
+      return { result, refreshes };
+    };
+
+    expect(await run({ US: "US_HOOK", ID: "ID_HOOK" }, "id-secret")).toEqual({ result: { accepted: true, matched: true }, refreshes: 1 });
+    expect(await run({ US: "US_HOOK", ID: "ID_HOOK" }, "us-secret")).toEqual({ result: { accepted: true, matched: false }, refreshes: 0 });
+    expect(await run("SHARED_HOOK", "us-secret")).toEqual({ result: { accepted: true, matched: true }, refreshes: 1 });
+    expect(await run({ US: "US_HOOK", ID: "ID_HOOK" }, "us-secret", true)).toEqual({ result: { accepted: true, matched: false }, refreshes: 0 });
+  });
+
+  test("propagates unexpected webhook verification errors while treating missing binding configuration as invalid", async () => {
+    const unexpected = new Error("adapter bug");
+    const throwingProvider: FundingProvider = {
+      manifest,
+      onramp: {
+        createOrder: async () => ({ outcome: "ambiguous" }),
+        getOrder: async () => ({ state: "unknown", providerStatus: "unknown" }),
+        verifyWebhook: () => { throw unexpected; },
+      },
+    };
+    const configured = new FundingCore({ providers: [throwingProvider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set" }, currentBaseBlock: async () => "1", verifyReceipt: async () => null });
+    await expect(configured.handleWebhook("fixture", new Uint8Array(), new Headers())).rejects.toBe(unexpected);
+
+    const events: Array<{ providerId: string; reason: "invalid" | "unmatched" | "region-mismatch" }> = [];
+    const missingConfig = new FundingCore({ providers: [throwingProvider], store: new MemoryFundingOrderStore(), env: {}, currentBaseBlock: async () => "1", verifyReceipt: async () => null, logUnmatchedWebhook: (event) => events.push(event) });
+    expect(await missingConfig.handleWebhook("fixture", new Uint8Array(), new Headers())).toEqual({ accepted: true, matched: false });
+    expect(events).toEqual([{ providerId: "fixture", reason: "invalid" }]);
+
+    throwingProvider.onramp!.verifyWebhook = () => { throw new FundingProviderConfigurationError("missing webhook secret"); };
+    const configurationMiss = new FundingCore({ providers: [throwingProvider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set" }, currentBaseBlock: async () => "1", verifyReceipt: async () => null, logUnmatchedWebhook: (event) => events.push(event) });
+    expect(await configurationMiss.handleWebhook("fixture", new Uint8Array(), new Headers())).toEqual({ accepted: true, matched: false });
+    expect(events.at(-1)).toEqual({ providerId: "fixture", reason: "invalid" });
+  });
+
+  test("logs a scrubbed region mismatch and propagates unexpected cross-region verification errors", async () => {
+    const store = new MemoryFundingOrderStore();
+    const bindings = [
+      { region: "US" as const, assetId: "base:usdc", currency: "USD" as const, directions: { onramp: { paymentMethods: [{ id: "bank", label: "Bank" }], env: ["US_HOOK"] } } },
+      { region: "ID" as const, assetId: "base:idrx", currency: "IDR" as const, directions: { onramp: { paymentMethods: [{ id: "bank", label: "Bank" }], env: ["ID_HOOK"] } } },
+    ];
+    const regionalManifest = { id: "regional", displayName: "Regional", docsUrl: "https://example.com", onramp: { apiOrigins: ["https://example.com"], reference: "home" as const, webhook: { signatureHeader: "x-signature", env: { US: "US_HOOK", ID: "ID_HOOK" } } }, bindings } satisfies FundingProviderManifest;
+    let orderRegionError: Error | null = null;
+    const unexpected = new Error("cross-region adapter bug");
+    const provider: FundingProvider = { manifest: regionalManifest, onramp: {
+      async createOrder(input, ctx) { return { outcome: "created", order: { providerOrderId: "private-regional-order", tokenAddress: ctx.binding.asset.address, expectedTokenAmountAtomic: input.quote!.tokenAmountAtomic, fees: [], expiresAt: null, instructions: { kind: "bank-transfer", rail: "VA", accountNumber: "1", amount: input.fiatAmount, currency: ctx.binding.currency } } }; },
+      async getOrder() { return { state: "awaiting-payment", providerStatus: "pending" }; },
+      verifyWebhook(_raw, headers, ctx) {
+        if (ctx.binding.region === "ID" && orderRegionError) throw orderRegionError;
+        const name = resolveWebhookEnvironment(regionalManifest.onramp.webhook, ctx.binding.region);
+        return name && ctx.env[name] === headers.get("x-signature") ? { providerOrderId: "private-regional-order" } : null;
+      },
+    } };
+    const quoteSecretName = "FUNDING_" + "QUOTE_SECRET";
+    const env = { [quoteSecretName]: "q".repeat(32), US_HOOK: "us-secret", ID_HOOK: "id-secret" };
+    const creatingCore = new FundingCore({ providers: [provider], store, env, currentBaseBlock: async () => "1", verifyReceipt: async () => null });
+    const quote = await creatingCore.createQuote(session, { providerId: "regional", region: "ID", paymentMethod: "bank", fiatAmount: "1000" }, "https://home.example");
+    await creatingCore.createOrder(session, { quoteToken: quote.quoteToken }, "https://home.example");
+
+    const events: Array<{ providerId: string; reason: "invalid" | "unmatched" | "region-mismatch" }> = [];
+    const core = new FundingCore({ providers: [provider], store, env, currentBaseBlock: async () => "1", verifyReceipt: async () => null, logUnmatchedWebhook: (event) => events.push(event) });
+    const raw = new TextEncoder().encode("private-body");
+    expect(await core.handleWebhook("regional", raw, new Headers({ "x-signature": "us-secret" }))).toEqual({ accepted: true, matched: false });
+    expect(events).toEqual([{ providerId: "regional", reason: "region-mismatch" }]);
+    expect(JSON.stringify(events)).not.toContain("private-regional-order");
+    expect(JSON.stringify(events)).not.toContain("private-body");
+
+    orderRegionError = new FundingProviderConfigurationError("missing binding configuration");
+    expect(await core.handleWebhook("regional", raw, new Headers({ "x-signature": "us-secret" }))).toEqual({ accepted: true, matched: false });
+    expect(events.at(-1)).toEqual({ providerId: "regional", reason: "region-mismatch" });
+
+    orderRegionError = unexpected;
+    await expect(core.handleWebhook("regional", raw, new Headers({ "x-signature": "us-secret" }))).rejects.toBe(unexpected);
+  });
+
   test("logs unmatched webhooks without raw bodies or provider order identifiers", async () => {
-    const events: Array<{ providerId: string; reason: "invalid" | "unmatched" }> = [];
+    const events: Array<{ providerId: string; reason: "invalid" | "unmatched" | "region-mismatch" }> = [];
     const provider: FundingProvider = { manifest, onramp: { createOrder: async () => ({ outcome: "ambiguous" }), getOrder: async () => ({ state: "unknown", providerStatus: "unknown" }), verifyWebhook: () => ({ providerOrderId: "secret-provider-order" }) } };
     const core = new FundingCore({ providers: [provider], store: new MemoryFundingOrderStore(), env: { FIXTURE_KEY: "set", FUNDING_QUOTE_SECRET: "s".repeat(32) }, currentBaseBlock: async () => "1", verifyReceipt: async () => null, logUnmatchedWebhook: (event) => events.push(event) });
     expect(await core.handleWebhook("fixture", new TextEncoder().encode("private-body"), new Headers())).toEqual({ accepted: true, matched: false });
