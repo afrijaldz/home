@@ -27,7 +27,7 @@ Everything in this document serves that. Anything that does not is deliberately 
 | Coinbase Onramp (US, USDC) | Generic v2 Orders API, Embedded Orders iframe, provider-scoped sandbox mode | Complete non-funded `agent-browser` sandbox flow and generic status proven September 16; production enablement and domain verification remain unconfirmed ([#294](https://github.com/jessepollak/home/issues/294)). |
 | Ripio Ramps (AR wARS, BR wBRL, CO wCOP) | Adapter and Add money flow on `main`; inert until every binding environment variable is set | Ripio must run the per-provider checklist; no live provider call has been made. |
 | IDRX (ID) | Adapter and Add money flow on `main`; inert until every binding environment variable is set | IDRX must run the per-provider checklist; no live provider call has been made. |
-| MXNB, XSGD, TRYB | Issuer scaffolds tracked in [#295](https://github.com/jessepollak/home/issues/295) have not started | Adapter, manifest, fixtures, and issuer confirmation. |
+| MXNB, XSGD | Provider workstreams [#552](https://github.com/jessepollak/home/issues/552) and [#557](https://github.com/jessepollak/home/issues/557) are planned; the former #295 bundle is superseded and TRYB is deferred | Adapter, manifest, fixtures, issuer access, and acceptance evidence. |
 
 Each route rebuilt the same things. The seam builds them once.
 
