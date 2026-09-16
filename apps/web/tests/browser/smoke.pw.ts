@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import type { RegionId } from "../../config/regions";
 import type { BalancesSnapshot } from "../../shared/balances/types";
 import { balancesSnapshot, scrollableBalancesSnapshot } from "./balances-fixtures";
@@ -568,6 +568,91 @@ test("IDRX funding reaches review, payment instructions, and receipt", async ({ 
   await page.getByRole("button", { name: "View payment instructions" }).click();
   await expect(page.getByText("123456789012", { exact: true })).toBeVisible();
   await expect(page.getByText("Money received")).toBeVisible({ timeout: 7_000 });
+});
+
+const PEER_OFFRAMP = {
+  version: 2,
+  direction: "offramp",
+  providers: [{
+    direction: "offramp", providerId: "peer", displayName: "Peer", region: "US", assetId: "base:usdc",
+    assetSymbol: "USDC", assetDecimals: 6, currency: "USD", quotes: false, kyc: null,
+    paymentMethods: [{ id: "cashapp", label: "Cash App", platform: "cashapp", handleHint: "Cashtag", minimumAmountAtomic: "10000", maximumAmountAtomic: null, estimateSemantics: "approximate", etaSemantics: "historical-not-guaranteed", corridorConfirmedBy: "pending" }],
+  }],
+};
+
+async function inputMetrics(locator: Locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { height: Number.parseFloat(style.height), fontSize: Number.parseFloat(style.fontSize) };
+  });
+}
+
+test("coverage native selects keep a mobile-zoom-safe font size", async ({ page }) => {
+  // A landscape iPhone's CSS width crosses the 768px breakpoint, so cover both
+  // portrait and a landscape-iPhone-like viewport: both must stay at 16px.
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/coverage");
+    const selects = page.getByRole("combobox");
+    await expect(selects.first()).toBeVisible();
+    // React can briefly detach a node while hydrating, and a detached node has
+    // no computed style; retry until every matched select measures 16px or
+    // more. A real 14px regression reads a finite 14 and keeps failing.
+    await expect.poll(async () => {
+      const fontSizes = await selects.evaluateAll((nodes) =>
+        nodes.map((node) => Number.parseFloat(getComputedStyle(node).fontSize)));
+      return fontSizes.length >= 4 && fontSizes.every(Number.isFinite) ? Math.min(...fontSizes) : 0;
+    }).toBeGreaterThanOrEqual(16);
+  }
+});
+
+async function openPeerCashOutHandle(page: Page) {
+  await page.goto("/home");
+  await page.getByRole("button", { name: "Send" }).click();
+  await typeAmount(page, "1");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: /Send to Zelle, Venmo, Cash App and more/ }).click();
+  await page.getByRole("button", { name: "Cash App" }).click();
+}
+
+test("mobile cash-out handle fields meet touch-target and zoom-safe metrics", async ({ page }) => {
+  await seedSignedInSession(page);
+  await installApiFixtures(page);
+  // Registered after the shared fixtures, so this handler wins and hands
+  // non-offramp provider reads back to them via fallback.
+  await page.route("**/api/funding/providers**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("direction") !== "offramp") return route.fallback();
+    return json(route, PEER_OFFRAMP);
+  });
+
+  // Portrait iPhone plus a landscape iPhone whose CSS width crosses the 768px
+  // breakpoint: both must keep 16px controls.
+  for (const [portraitPass, viewport] of [{ width: 390, height: 844 }, { width: 844, height: 390 }].entries()) {
+    await page.setViewportSize(viewport);
+    await openPeerCashOutHandle(page);
+
+    const handle = page.getByRole("textbox", { name: "Cash App handle" });
+    await expect(handle).toBeVisible();
+    await expect.poll(async () => (await inputMetrics(handle)).fontSize).toBeGreaterThanOrEqual(16);
+    if (portraitPass === 0) {
+      await expect.poll(async () => (await inputMetrics(handle)).height).toBeGreaterThanOrEqual(44);
+      await expect(handle).toHaveAttribute("autocomplete", "off");
+      await expect(handle).toHaveAttribute("autocapitalize", "none");
+      await expect(handle).toHaveAttribute("autocorrect", "off");
+      await expect(handle).toHaveAttribute("spellcheck", "false");
+      await expect(handle).toHaveAttribute("enterkeyhint", "next");
+    }
+
+    await handle.fill("$alice");
+    await page.getByRole("button", { name: "Continue" }).click();
+    const confirmation = page.getByRole("textbox", { name: "Re-enter handle" });
+    await expect(confirmation).toBeVisible();
+    await expect.poll(async () => (await inputMetrics(confirmation)).fontSize).toBeGreaterThanOrEqual(16);
+    if (portraitPass === 0) {
+      await expect.poll(async () => (await inputMetrics(confirmation)).height).toBeGreaterThanOrEqual(44);
+      await expect(confirmation).toHaveAttribute("enterkeyhint", "done");
+    }
+  }
 });
 
 test("representative canonical routes SSR and hydrate their selected panel", async ({ page }) => {
