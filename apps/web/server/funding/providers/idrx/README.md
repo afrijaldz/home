@@ -57,7 +57,7 @@ One open order per test Base Account. All orders sit under one operator account 
 
 - `dispatch-ambiguous`: stop, never retry. IDRX lead looks the order up by `merchantOrderId` when Home stored one, otherwise by destination wallet and creation time, and reports `WAITING_FOR_PAYMENT`, `EXPIRED`, or `PAID`. There is no partner cancel; an unpaid order expires on its own after `expiryPeriod` (Home sends 60 minutes). Locally the operator may reconcile the row with the guarded one-row SQL from the Ripio playbook using `provider_id = 'idrx'` and only `expired` or `failed` as the target state. On hosted, escalate to Jesse.
 - If IDRX reports the order as paid, do not terminalize it: the IDRX will still be delivered and must be accounted for.
-- `settling` (`PROCESSING:PAID`) beyond the duration IDRX states during schema confirmation: stop, hand the `merchantOrderId` to the IDRX lead, do not create another order for that account meanwhile.
+- `settling` (`PROCESSING:PAID`) normally lasts minutes: on IDRX production, Base orders created July to September 2026 reached `MINTED:PAID` with a p90 of 27 minutes from order creation below Rp50,000,000, and 59 minutes at or above it, where a manager multisig approval is required. Treat more than 60 minutes as stuck: stop, hand the `merchantOrderId` to the IDRX lead, do not create another order for that account meanwhile. A stuck order is rare but real (one in about 1,200), and only IDRX operations can move it.
 - Kill switch: drain open orders before removing `IDRX_CLIENT_ID`, `IDRX_CLIENT_SECRET`, or `IDRX_CUSTOMER_NAME`; without them the binding disappears and open orders stall at their last state.
 
 ### Evidence required (per order)
@@ -74,7 +74,7 @@ One open order per test Base Account. All orders sit under one operator account 
 - Minimum Rp20,000 per order for every method. Expiry `expiryPeriod` minutes, default 120; Home sends 60.
 - Checkout origin for QRIS is `https://checkout.idrx.co` with a `token` query parameter and nothing else.
 - History records carry `toBeMinted` and `paymentAmount` as JSON numbers; create responses carry them as strings.
-- Status pairs the adapter maps are the complete set: `NOT_AVAILABLE:WAITING_FOR_PAYMENT`, `NOT_AVAILABLE:EXPIRED`, `PROCESSING:PAID`, `MINTED:PAID`, `REJECTED:PAID`, `REFUND:PAID`. Anything else stays `unknown`. `PROCESSING:PAID` can persist until IDRX operations act on the order.
+- Status pairs the adapter maps are the complete set: `NOT_AVAILABLE:WAITING_FOR_PAYMENT`, `NOT_AVAILABLE:EXPIRED`, `PROCESSING:PAID`, `MINTED:PAID`, `REJECTED:PAID`, `REFUND:PAID`. Anything else stays `unknown`. `PROCESSING:PAID` normally clears within minutes; when the on-chain mint fails it persists until IDRX operations act on the order (see stop and recovery).
 - Redemption (IDR out) is not an offramp port. The holder burns IDRX on Base from their own wallet and submits the hash to IDRX with a bank account in their own name, from a KYC verified IDRX account; IDRX releases the payout after review, then BI-FAST or RTGS. See https://docs.idrx.co/services/redeem-idr. A round-trip proof (mint via Home, burn from the Home wallet, redeem through the holder's IDRX account, reconcile both legs) can be recorded next to the funded order when authorized; it runs outside Home.
 - Identity: closed VAs and redemption are bound to the KYC identity of the API key holder. With one operator key every Home user is the operator. QRIS is the honest live binding until Home users have their own IDRX identity on the seam.
 
