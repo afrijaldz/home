@@ -155,9 +155,12 @@ describe("IDRX adapter behavior", () => {
     }
   });
 
-  test("offers only QRIS on the live binding until Home users have their own IDRX identity", () => {
+  test("offers the closed VAs and QRIS on the live binding, each order for the user's own IDRX member", () => {
     expect(idrxProvider.manifest.bindings.map((binding) => binding.directions.onramp!.paymentMethods.map((method) => method.id)))
-      .toEqual([["qris"]]);
+      .toEqual([["bank-va-mandiri", "bank-va-bri", "qris"]]);
+    expect(idrxProvider.manifest.onramp?.kyc?.fields?.map((field) => field.name))
+      .toEqual(["email", "fullname", "idNumber", "address", "bank", "bankAccountNumber"]);
+    expect(idrxProvider.onramp?.ensureCustomer).toBeDefined();
   });
 
   test("keeps every committed provider fixture explicitly synthetic or a dated live capture", () => {
@@ -366,6 +369,103 @@ describe("IDRX adapter behavior", () => {
         },
       });
     }
+  });
+
+  const kycFields = {
+    email: "member@example.com",
+    fullname: "Afrijal Dzuhri",
+    idNumber: "3312345678900001",
+    address: "Jl. Contoh 1, Jakarta",
+    bank: "Mandiri",
+    bankAccountNumber: "1234567890123",
+  };
+
+  test("onboards the user as a member and registers the bank account they will pay from", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const ctx = createProviderContext({
+      manifest: idrxManifest,
+      region: "ID",
+      paymentMethodId: "bank-va-mandiri",
+      env,
+      fetchImplementation: (async (input: RequestInfo | URL, init: RequestInit) => {
+        const url = String(input);
+        requests.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.endsWith("/auth/onboarding")) return Response.json({ statusCode: 201, message: "success", data: { id: 17105, fullname: "AFRIJAL DZUHRI" } }, { status: 201 });
+        if (url.endsWith("/auth/add-bank-account")) return Response.json({ statusCode: 201, message: "success", data: { id: 7923, userId: 17105 } }, { status: 201 });
+        throw new Error(`unexpected ${url}`);
+      }) as unknown as typeof fetch,
+    });
+
+    const result = await idrxProvider.onramp!.ensureCustomer!({ subject: "home-subject", fields: kycFields }, ctx);
+
+    expect(result).toEqual({ customerRef: "17105" });
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://api.idrx.co/auth/onboarding",
+      "https://api.idrx.co/auth/add-bank-account",
+    ]);
+    expect(requests[0]?.body).toEqual({ email: "member@example.com", fullname: "Afrijal Dzuhri", address: "Jl. Contoh 1, Jakarta", idNumber: "3312345678900001" });
+    expect(requests[1]?.body).toEqual({ memberId: 17105, bankAccountNumber: "1234567890123", bankName: "Mandiri", bankCode: "008" });
+    expect(JSON.stringify(requests)).not.toContain("home-subject");
+  });
+
+  test("keeps no customer when IDRX rejects the onboarding or the bank account", async () => {
+    for (const failing of ["/auth/onboarding", "/auth/add-bank-account"]) {
+      const ctx = createProviderContext({
+        manifest: idrxManifest,
+        region: "ID",
+        paymentMethodId: "bank-va-mandiri",
+        env,
+        fetchImplementation: (async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.endsWith(failing)) return Response.json({ statusCode: 400, message: "email is already used by another account" }, { status: 400 });
+          return Response.json({ statusCode: 201, message: "success", data: { id: 17105 } }, { status: 201 });
+        }) as unknown as typeof fetch,
+      });
+      await expect(idrxProvider.onramp!.ensureCustomer!({ subject: "s", fields: kycFields }, ctx)).rejects.toThrow("email is already used");
+    }
+  });
+
+  test("rejects malformed KYC fields before any IDRX call", async () => {
+    const cases = [
+      { ...kycFields, email: "not-an-email" },
+      { ...kycFields, idNumber: "123" },
+      { ...kycFields, bank: "BCA" },
+      { ...kycFields, bankAccountNumber: "12ab" },
+      { ...kycFields, fullname: "" },
+    ];
+    for (const fields of cases) {
+      let called = false;
+      const ctx = createProviderContext({
+        manifest: idrxManifest,
+        region: "ID",
+        paymentMethodId: "qris",
+        env,
+        fetchImplementation: (async () => { called = true; return Response.json({}); }) as unknown as typeof fetch,
+      });
+      await expect(idrxProvider.onramp!.ensureCustomer!({ subject: "s", fields }, ctx)).rejects.toThrow("Invalid IDRX KYC field");
+      expect(called).toBe(false);
+    }
+  });
+
+  test("creates the order for the member behind the customer reference", async () => {
+    const requests: Array<{ body: unknown }> = [];
+    const ctx = createProviderContext({
+      manifest: idrxManifest,
+      region: "ID",
+      paymentMethodId: "bank-va-mandiri",
+      env,
+      fetchImplementation: (async (_input: RequestInfo | URL, init: RequestInit) => {
+        requests.push({ body: JSON.parse(String(init.body)) });
+        return jsonFixture(createVaFixture);
+      }) as unknown as typeof fetch,
+    });
+
+    const result = await idrxProvider.onramp!.createOrder({ ...intent, customerRef: "17105" }, ctx);
+    expect(result.outcome).toBe("created");
+    expect(requests[0]?.body).toMatchObject({ memberId: 17105, paymentMethod: "va", channelId: "MANDIRI" });
+
+    const bad = createProviderContext({ manifest: idrxManifest, region: "ID", paymentMethodId: "bank-va-mandiri", env, fetchImplementation: (async () => jsonFixture(createVaFixture)) as unknown as typeof fetch });
+    await expect(idrxProvider.onramp!.createOrder({ ...intent, customerRef: "not-a-member" }, bad)).resolves.toEqual({ outcome: "rejected", message: "The IDRX customer reference is invalid." });
   });
 
   test("opens the hosted checkout on QRIS so the user pays with the quoted method", async () => {

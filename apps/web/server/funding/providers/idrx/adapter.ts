@@ -13,9 +13,11 @@ import type {
   ReconciliationIntent,
 } from "@/shared/funding/provider-contract";
 import { decimalToAtomic } from "@/shared/formatting/atomic";
-import { IDRX_API_ORIGIN, IDRX_CHECKOUT_ORIGIN, idrxManifest } from "./manifest";
+import { IDRX_API_ORIGIN, IDRX_BANKS, IDRX_CHECKOUT_ORIGIN, idrxManifest } from "./manifest";
 
 const MINT_PATH = "/transaction/mint-request";
+const ONBOARDING_PATH = "/auth/onboarding";
+const BANK_ACCOUNT_PATH = "/auth/add-bank-account";
 const QUOTE_PATH = "/v2/transaction/mint-quote";
 const HISTORY_PATH = "/transaction/user-transaction-history";
 // The generic QRIS channel the IDRX checkout itself uses.
@@ -38,6 +40,28 @@ type JsonRecord = Record<string, unknown>;
 export const idrxProvider: FundingProvider = {
   manifest: idrxManifest,
   onramp: {
+    // A Home user becomes a member of the operator's IDRX organization, so
+    // orders are theirs: the closed VA is paid from the bank account
+    // registered here, and the QRIS payer-name match uses their KTP name.
+    // The member id is the customer reference the core stores.
+    async ensureCustomer(input, ctx) {
+      const fields = readKycFields(input.fields);
+      const onboarded = await postJson(ctx, ONBOARDING_PATH, {
+        email: fields.email,
+        fullname: fields.fullname,
+        address: fields.address,
+        idNumber: fields.idNumber,
+      });
+      const memberId = readMemberId(onboarded.id);
+      await postJson(ctx, BANK_ACCOUNT_PATH, {
+        memberId,
+        bankAccountNumber: fields.bankAccountNumber,
+        bankName: fields.bank,
+        bankCode: fields.bankCode,
+      });
+      return { customerRef: String(memberId) };
+    },
+
     async createQuote(input, ctx) {
       const channel = quoteChannel(ctx);
       if (!channel) throw new Error("The selected IDRX payment method is not supported.");
@@ -72,6 +96,11 @@ export const idrxProvider: FundingProvider = {
       };
     }
 
+    if (input.customerRef !== undefined && !/^[1-9][0-9]{0,11}$/.test(input.customerRef)) {
+      // A reference Home stored that is not an IDRX member id: nothing was
+      // sent, so this is a rejection, not an ambiguous dispatch.
+      return { outcome: "rejected", message: "The IDRX customer reference is invalid." };
+    }
     const body = createMintBody(input, ctx);
     if (!body) {
       return {
@@ -147,10 +176,8 @@ export const idrxProvider: FundingProvider = {
       if (!accountNumberPattern.test(accountNumber)) {
         throw new Error("Invalid IDRX virtual account.");
       }
-      const expectedCustomerName = normalizeCustomerName(ctx.env.IDRX_CUSTOMER_NAME);
-      if (normalizeCustomerName(accountName) !== expectedCustomerName) {
-        throw new Error("IDRX customer mismatch.");
-      }
+      // The VA is named after the member the order was created for. Home
+      // keeps no copy of that name, so the echo is bounded but not compared.
       return created({
         ...common,
         fees,
@@ -228,6 +255,8 @@ function createMintBody(
     networkChainId: String(ctx.binding.asset.chainId),
     requestType: "idrx",
     expiryPeriod: 60,
+    // The order belongs to the Home user's IDRX member, not the operator.
+    ...(input.customerRef ? { memberId: readMemberId(input.customerRef) } : {}),
   };
   const channel = channelForPaymentMethod(ctx.binding.paymentMethod.id);
   if (channel) {
@@ -250,6 +279,72 @@ function createMintBody(
     };
   }
   return null;
+}
+
+type IdrxKycFields = {
+  email: string;
+  fullname: string;
+  address: string;
+  idNumber: string;
+  bank: keyof typeof IDRX_BANKS;
+  bankCode: string;
+  bankAccountNumber: string;
+};
+
+function readKycFields(fields: Record<string, string>): IdrxKycFields {
+  const text = (name: string, max: number) => {
+    const value = (fields[name] ?? "").trim();
+    if (value.length === 0 || value.length > max) throw new Error(`Invalid IDRX KYC field: ${name}.`);
+    return value;
+  };
+  const email = text("email", 254);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid IDRX KYC field: email.");
+  const idNumber = text("idNumber", 16);
+  if (!/^[0-9]{16}$/.test(idNumber)) throw new Error("Invalid IDRX KYC field: idNumber.");
+  const bank = text("bank", 16);
+  if (!(bank in IDRX_BANKS)) throw new Error("Invalid IDRX KYC field: bank.");
+  const bankAccountNumber = text("bankAccountNumber", 32);
+  if (!accountNumberPattern.test(bankAccountNumber)) throw new Error("Invalid IDRX KYC field: bankAccountNumber.");
+  return {
+    email,
+    fullname: text("fullname", 128),
+    address: text("address", 255),
+    idNumber,
+    bank: bank as keyof typeof IDRX_BANKS,
+    bankCode: IDRX_BANKS[bank as keyof typeof IDRX_BANKS].code,
+    bankAccountNumber,
+  };
+}
+
+function readMemberId(value: unknown): number {
+  const text = typeof value === "number" ? String(value) : value;
+  if (typeof text !== "string" || !/^[1-9][0-9]{0,11}$/.test(text)) throw new Error("Invalid IDRX member id.");
+  return Number(text);
+}
+
+// A signed POST whose 2xx `data` is returned, and whose failure is an error
+// with the status: `ensureCustomer` has no partial outcome worth keeping.
+async function postJson(ctx: ProviderContext, path: string, body: Record<string, unknown>): Promise<JsonRecord> {
+  const url = `${IDRX_API_ORIGIN}${path}`;
+  const serializedBody = JSON.stringify(body);
+  const response = await ctx.fetch(url, {
+    method: "POST",
+    headers: createRequestHeaders(ctx, "POST", url, serializedBody),
+    body: serializedBody,
+    cache: "no-store",
+  });
+  const text = await readBoundedText(response);
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = parseProviderJson(text);
+      if (isRecord(payload) && typeof payload.message === "string") message = readBoundedString(payload.message, 256);
+    } catch {
+      // The status is the message.
+    }
+    throw new Error(`IDRX ${path} failed: ${message}`);
+  }
+  return readData(parseProviderJson(text));
 }
 
 function quoteChannel(
@@ -998,9 +1093,6 @@ export function idrxAtomicAmount(value: string, decimals: number): bigint | null
   }
 }
 
-function normalizeCustomerName(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleUpperCase("id-ID");
-}
 
 function readBoundedString(value: unknown, maximumLength: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maximumLength) {
