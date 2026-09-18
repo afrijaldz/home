@@ -195,7 +195,7 @@ export function FundingOrderFlow({
   }
 
   if (currentOrder?.instructions?.kind === "redirect") {
-    return <><MoneyModalHeader title={`Deposit ${binding.currency}`} titleId={titleId} onBack={onBack} onClose={onClose} closeLabel="Close add money" /><OrderStatus order={currentOrder} /></>;
+    return <><MoneyModalHeader title={`Deposit ${binding.currency}`} titleId={titleId} onBack={onBack} onClose={onClose} closeLabel="Close add money" /><OrderStatus binding={binding} order={currentOrder} /></>;
   }
   if (
     currentOrder?.instructions &&
@@ -220,7 +220,7 @@ export function FundingOrderFlow({
           onClose={onClose}
           closeLabel="Close add money"
         />
-        <OrderStatus order={currentOrder} onRefetch={orderQuery.refetch} />
+        <OrderStatus binding={binding} order={currentOrder} onRefetch={orderQuery.refetch} />
       </>
     );
   }
@@ -502,9 +502,11 @@ function DefinitionRow({ label, value }: { label: string; value: string }) {
   );
 }
 function OrderStatus({
+  binding,
   order,
   onRefetch,
 }: {
+  binding: FundingBinding;
   order: FundingOrderSummary;
   onRefetch?: () => Promise<unknown>;
 }) {
@@ -515,6 +517,7 @@ function OrderStatus({
         <h3 className="text-lg font-semibold">{copy.title}</h3>
         {order.sandbox ? <SandboxBadge /> : null}
         {copy.body ? <FundingNotice>{copy.body}</FundingNotice> : null}
+        <SettledAmounts binding={binding} order={order} />
         {order.instructions &&
         (order.instructions.kind !== "embed" || order.state === "awaiting-payment") ? (
           <InstructionView
@@ -530,6 +533,42 @@ function OrderStatus({
       </MoneyModalBody>
 
     </>
+  );
+}
+
+// A provider may settle the order for less than the quote by fees it itemizes
+// after creation (IDRX hosted QRIS). Redirect orders skip the economics review,
+// so this is the only place the user sees the final receive amount and why it
+// is lower than what the quote said.
+function SettledAmounts({
+  binding,
+  order,
+}: {
+  binding: FundingBinding;
+  order: FundingOrderSummary;
+}) {
+  const fees = order.fees ?? [];
+  if (!fees.length || !order.expectedTokenAmountAtomic) return null;
+  const regionId = presentationCurrencyMetadata(
+    binding.currency,
+  ).defaultRegionId;
+  const receive = formatPresentationTokenAmount(
+    order.expectedTokenAmountAtomic,
+    binding.assetDecimals,
+    binding.assetSymbol,
+    { regionId, useNoBreakSpace: true },
+  );
+  return (
+    <dl>
+      <DefinitionRow label="Receive" value={receive} />
+      {fees.map((fee, index) => (
+        <DefinitionRow
+          key={`${fee.label}:${index}`}
+          label={fee.label}
+          value={formatFiatAmount(fee.amount, fee.currency)}
+        />
+      ))}
+    </dl>
   );
 }
 
